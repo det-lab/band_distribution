@@ -89,19 +89,20 @@ def default_box(band):
 
 # Node counts per axis that keep the worst-case interpolation error of the
 # default box near 1e-7 per axis (~1e-6 total, i.e. ~0.02 in the log-
-# likelihood at 20,000 events).  From one-axis-at-a-time studies on the
-# current box against directly computed points (Chebyshev-Lobatto nodes,
-# epsrel=1e-7, worst of three baselines spanning the box), smallest n with
-# error <= 1e-7:  NR k 7, F0 2, V 4, p0 2, dp 3, q0 5, dq 3;  ER F0 2, V 11,
-# p0 4, dp 6, q0 6, dq 10 (dq only reaches ~2e-8, the integrals' own noise
-# floor is ~1e-8).  Used below with a margin: F0 3 everywhere, NR p0 3.  ER
-# is expensive in V and dq because the ER band is sensitive to V through the
-# Ep edge and to the charge resolution.  Validate any table against held-out
-# points (`validate`) rather than trusting these -- one-axis-at-a-time studies
-# cannot see cross terms.
+# likelihood at 20,000 events).  They depend on the REGION: these come from
+# one-axis-at-a-time studies for the analysis ROI Ep 2.5-350 / Eq 0.75-200
+# against directly computed points (Chebyshev-Lobatto nodes, epsrel=1e-7,
+# worst of three baselines spanning the box).  Smallest n with error <= 1e-7:
+#   NR  k 8, F0 3, V 4, p0 4, dp 3, q0 ~16, dq 4
+#   ER  F0 2, V 8, p0 4, dp 6, q0 10, dq 8
+# with a margin on F0, ER V/dq/q0 and NR q0.  NR q0 is the hard axis: the
+# error falls only ~x4 per two nodes (1e-6 at n=12), so 16 is an
+# extrapolation -- check it with `validate`.  (For the earlier 2-200 / 4-100
+# region q0 needed only 5 nodes.)  One-axis-at-a-time studies cannot see
+# cross terms, so validate any table against held-out points.
 RECOMMENDED_NODES = {
-    "NR": {"k": 7, "F0": 3, "V": 4, "p0": 3, "dp": 3, "q0": 5, "dq": 3},      # 11,340 points
-    "ER": {"F0": 3, "V": 11, "p0": 4, "dp": 6, "q0": 6, "dq": 10},            # 47,520 points
+    "NR": {"k": 8, "F0": 3, "V": 4, "p0": 4, "dp": 3, "q0": 16, "dq": 4},     # 73,728 points
+    "ER": {"F0": 3, "V": 9, "p0": 4, "dp": 6, "q0": 11, "dq": 9},             # 64,152 points
 }
 DEFAULT_REGION = (2.0, 200.0, 4.0, 100.0)
 
