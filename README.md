@@ -160,6 +160,15 @@ python python/normgrid.py validate --table norm_NR.h5 --heldout-spec held_NR.jso
 
 **On a Slurm cluster** use the **ifx (or flang) container, not gfortran** — gfortran runs the band integrals ~25x slower — via `slurm/normgrid.sbatch`, a job-array template (one single-core task per chunk of grid points; `OMP_NUM_THREADS=1` so an ifx build doesn't oversubscribe cores; a header comment gives the exact `sbatch` and `merge`/`validate` commands, and resubmitting the same array only redoes unfinished chunks).  It runs the `band.sif` built from `Dockerfile_intel` or `Dockerfile_llvm` (see "Build the singularity/apptainer container" below), or set `BAND_NATIVE=1` to use a library you built on the cluster.  `osg/` holds a similar HTCondor template.
 
+**One command for a whole table.**  How many nodes an axis needs depends on the fit region (the same box needed 5 nodes in `q0` for Eq 4–100 and about 16 for Eq 0.75–200), so `slurm/build_table.sh` measures instead of assuming.  For a region it (1) evaluates 33 Chebyshev–Lobatto nodes along each axis at three baseline points (`python/normplan.py points`, about 700 integrals), (2) reads the Chebyshev coefficients of each axis to find the fewest nodes whose truncation error is below `TOL` (`normplan.py analyze`; it stops with an error if an axis is not resolved by 33 nodes, rather than guessing), (3) evaluates the resulting grid and a set of held-out points, and (4) merges and validates, exiting with status 1 if the worst held-out error exceeds `ACCEPT`:
+
+```
+slurm/build_table.sh NR 2.5 350 0.75 200                 # -> tables/norm_NR_ep2.5-350_eq0.75-200.h5
+TOL=2.5e-8 slurm/build_table.sh NR 2.5 350 0.75 200      # retry with more nodes; earlier results are reused
+```
+
+Each Slurm stage is `sbatch --wait slurm/normgrid.sbatch ...`, so run the script somewhere it can stay alive (tmux/screen).  Options (`TOL`, `EPSREL`, `ACCEPT`, chunk sizes, `ACCOUNT`/`PARTITION`/`TIME`) are documented in the script header.  The one-axis-at-a-time study cannot see cross terms between axes, which is why the held-out check is the gate.  `test/slurm/test_build_table.sh` runs the whole chain locally against a mock `sbatch` and an analytic stand-in for the integrals.
+
 `run` is resumable and crash-tolerant: Fortran `error stop` (e.g. the quadrature not certifying `epsrel=1e-7`) kills the process, so a supervisor records that point as `nan` and restarts past it; re-run failures with a looser tolerance via `run --retry-failed --epsrel 1e-6`.  `merge` refuses to build a table with missing points.  The HDF5 file records the region, fixed parameters, library version and git commit it was built with — rebuild if any of those change.  (`h5py` is in `environment.yaml`.)  Then hand the tables to `PpqPDF`; nothing else in the fit changes:
 
 ```python

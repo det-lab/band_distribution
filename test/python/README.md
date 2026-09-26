@@ -19,6 +19,7 @@ build `lib/libband_distribution.so` first.
 | `test_chisquare_er_simulator.py` | Physics: events from the independent ER simulator follow the Fortran `PpqG`. |
 | `test_region_integral.py` | The region-normalization integral (`ppqn_region`/`ppqg_region`) against nested `scipy.integrate.quad`, timing, the non-convergence safety net, and the fast error-out on invalid parameters (p10 < p0 etc.). |
 | `test_normgrid.py` | The precomputed-table pipeline (`python/normgrid.py`): interpolant exactness, no-extrapolation, crash-tolerant worker, HDF5 round trip. No Fortran needed. |
+| `test_normplan.py` | The node-count planner (`python/normplan.py`): study layout, the coefficient-tail criterion on functions of known smoothness, the study → analyze path with analytic stand-in evaluators, and that a rough axis stops the plan.  `test/slurm/test_build_table.sh` runs `slurm/build_table.sh` end to end against a mock `sbatch` (needs h5py). |
 
 The two simulator tests are the strongest statement: the event generator
 (`generate_events.py`) knows nothing about the PDF's integrals — it draws

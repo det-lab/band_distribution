@@ -99,7 +99,10 @@ def default_box(band):
 # error falls only ~x4 per two nodes (1e-6 at n=12), so 16 is an
 # extrapolation -- check it with `validate`.  (For the earlier 2-200 / 4-100
 # region q0 needed only 5 nodes.)  One-axis-at-a-time studies cannot see
-# cross terms, so validate any table against held-out points.
+# cross terms, so validate any table against held-out points.  For another
+# region do not reuse these: slurm/build_table.sh (python/normplan.py) measures
+# the counts for the region it is given -- it reproduces the NR counts below
+# and the ER ones to within a node.
 RECOMMENDED_NODES = {
     "NR": {"k": 8, "F0": 3, "V": 4, "p0": 4, "dp": 3, "q0": 16, "dq": 4},     # 73,728 points
     "ER": {"F0": 3, "V": 9, "p0": 4, "dp": 6, "q0": 11, "dq": 9},             # 64,152 points
@@ -190,7 +193,11 @@ def grid_shape(spec):
 
 
 def n_points(spec):
-    return int(np.prod(grid_shape(spec))) if spec["kind"] == "grid" else spec["n"]
+    if spec["kind"] == "grid":
+        return int(np.prod(grid_shape(spec)))
+    if spec["kind"] == "points":                # an explicit list (normplan's study)
+        return len(spec["points"])
+    return spec["n"]
 
 
 def coords_at(spec, i):
@@ -203,6 +210,8 @@ def coords_at(spec, i):
         nodes = nodes_of(spec)
         idx = np.unravel_index(i, grid_shape(spec))
         return {a: float(nodes[a][j]) for a, j in zip(axes, idx)}
+    if spec["kind"] == "points":
+        return dict(spec["points"][i])
     rng = np.random.default_rng([spec["seed"], i])
     for _ in range(10000):
         c = {a: float(spec["box"][a][0] + rng.random() * (spec["box"][a][1] - spec["box"][a][0]))
@@ -232,7 +241,17 @@ def physical_params(spec, coords):
 def _evaluate(spec, params, epsrel):
     """One region integral.  NORMGRID_FAKE=1 swaps in a cheap analytic stand-in
     (for the tests); NORMGRID_FAKE_CRASH=<idx> is handled by the worker."""
-    if os.environ.get("NORMGRID_FAKE"):
+    fake = os.environ.get("NORMGRID_FAKE")
+    if fake in ("smooth", "kink"):
+        # analytic stand-ins with KNOWN convergence, in box-normalised coordinates u in [-1, 1]:
+        # smooth = exp(3 u_V + 6 u_q0) (Chebyshev coefficients ~ Bessel I_j, needs ~10-20 nodes
+        # on those two axes, the minimum elsewhere); kink = |u_q0 - 0.13| (algebraic decay, never converges)
+        c = {**params, "dp": params["p10"] - params["p0"], "dq": params["q10"] - params["q0"]}
+        u = {a: 2 * (c[a] - lo) / (hi - lo) - 1 for a, (lo, hi) in spec["box"].items()}
+        if fake == "kink":
+            return 1.0 + abs(u["q0"] - 0.13)
+        return math.exp(3 * u["V"] + 6 * u["q0"]) * (1 + 0.05 * sum(v for a, v in u.items() if a not in ("V", "q0")))
+    if fake:
         return 1.0 + sum(params[k] * (i + 1) for i, k in enumerate(sorted(params))) * 1e-3
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from ppqfort_pdf import ppqg_region, ppqn_region
@@ -461,7 +480,10 @@ class NormInterpolator:
 # Validation against held-out, directly computed points
 # ---------------------------------------------------------------------------
 
-def validate(table_path, heldout_spec_path, result_paths, n_worst=5):
+def validate(table_path, heldout_spec_path, result_paths, n_worst=5, accept=None):
+    """Print the interpolation error against held-out points; returns the
+    array of relative errors.  With `accept`, also prints PASS/FAIL against
+    that worst-case relative error (the CLI turns FAIL into exit status 1)."""
     table = NormInterpolator.from_hdf5(table_path)
     spec = load_spec(heldout_spec_path)
     vals, _ = gather_results(spec, result_paths)
@@ -478,6 +500,8 @@ def validate(table_path, heldout_spec_path, result_paths, n_worst=5):
     print(f"  => log-likelihood error at 20,000 events: max {2e4 * errs.max():.3f}, rms {2e4 * np.sqrt(np.mean(errs**2)):.3f}")
     for e, i, c in sorted(rows, reverse=True)[:n_worst]:
         print(f"  worst: point {i} err {e:.2e}  " + " ".join(f"{a}={v:.4g}" for a, v in c.items()))
+    if accept is not None:
+        print(f"  {'PASS' if errs.max() <= accept else 'FAIL'}: worst-case error {errs.max():.2e} vs accepted {accept:.1e}")
     return errs
 
 
@@ -543,6 +567,8 @@ def main(argv=None):
     p = sub.add_parser("validate", help="interpolation error against held-out points")
     p.add_argument("--table", required=True); p.add_argument("--heldout-spec", required=True)
     p.add_argument("--results", nargs="+", required=True)
+    p.add_argument("--accept", type=float, default=None, metavar="REL_ERR",
+                   help="exit status 1 if the worst held-out relative error exceeds this")
 
     a = ap.parse_args(argv)
     expand = lambda pats: sorted({f for pat in pats for f in (glob.glob(pat) or [pat])})
@@ -572,7 +598,9 @@ def main(argv=None):
     elif a.cmd == "merge":
         merge(a.spec, expand(a.results), a.out, a.allow_missing)
     elif a.cmd == "validate":
-        validate(a.table, a.heldout_spec, expand(a.results))
+        errs = validate(a.table, a.heldout_spec, expand(a.results), accept=a.accept)
+        if a.accept is not None and errs.max() > a.accept:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
