@@ -71,17 +71,21 @@ check("prior_bounds without a table is an error",
 pdf = make()
 tb = pdf.table_bounds()
 check("table_bounds: one box per band", set(tb) == {"NR", "ER"} and "k" in tb["NR"] and "k" not in tb["ER"]
-      and tb["ER"]["F0"] == (0.1, 0.35))
+      and np.allclose(tb["ER"]["F0"], (0.1, 0.35)))
 make(prior_bounds=dict({p: v for p, v in tb["NR"].items() if p not in ("k", "F0")},
                        NR={"k": tb["NR"]["k"], "F0": tb["NR"]["F0"]}, ER={"F0": tb["ER"]["F0"]}))
 check("table_bounds used as the prior passes", True)
 
 rng = np.random.default_rng(1)
 n = 32
-walkers = {p: rng.uniform(*shared[p], n) for p in ("V", "p0", "q0")}
+walkers = {p: rng.uniform(*shared[p], n) for p in ("V", "p0")}
+# shared["q0"] = (0.2, 1.8) * Q0_MEAN is the *design prior*'s range; the table's
+# actual q0 box is narrower (capped at max q10 = 0.4, see table_bounds() above),
+# so draw q0 from there directly rather than from shared["q0"] and clamping --
+# clamping against q10 doesn't help when the q0 draw itself already exceeds 0.4.
+walkers["q0"] = rng.uniform(*tb["NR"]["q0"], n)
 walkers["p10"] = rng.uniform(0.3, 0.6, n)
 walkers["q10"] = np.maximum(rng.uniform(0.2, 0.4, n), walkers["q0"])
-walkers["q0"] = np.minimum(walkers["q0"], walkers["q10"])
 walkers["NR"] = {"k": rng.uniform(0.13, 0.22, n), "F0": rng.uniform(1e-5, 1.0, n)}
 walkers["ER"] = {"F0": rng.uniform(0.15, 0.3, n)}
 pdf.check_points(walkers)
