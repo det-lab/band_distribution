@@ -32,6 +32,11 @@
 #   STUDY_CHUNK=40 GRID_CHUNK=500 HELD_CHUNK=100   points per array task
 #   THROTTLE=200  max concurrent tasks of one array
 #   MAX_POINTS=500000   refuse a bigger grid (says which axes are expensive)
+#   BOX=          replace axes of the band's default box (normgrid.DEFAULT_BOX),
+#                 e.g. BOX="V=2.5:4 dq=0:0.42" -- what PriorNotCoveredError
+#                 suggests when an MCMC prior reaches outside a table.  A custom
+#                 box gets its own build directory and table name (tag
+#                 suffix _box<hash>): study and held-out results depend on it.
 #   ACCOUNT= PARTITION= TIME=   passed to sbatch when set
 #   BAND_SIF=/scratch/$USER/containers/band.sif   the container (as in
 #                 normgrid.sbatch); checked here before anything is submitted
@@ -50,6 +55,12 @@ THROTTLE=${THROTTLE:-200}; MAX_POINTS=${MAX_POINTS:-500000}
 PYTHON=${PYTHON:-python3}
 
 TAG=${BAND}_ep${EP_MIN}-${EP_MAX}_eq${EQ_MIN}-${EQ_MAX}
+BOX_ARGS=()
+if [[ -n "${BOX:-}" ]]; then
+    read -r -a BOX_ARGS <<< "$BOX"
+    # the hash of the sorted entries names the box: same box, same directory
+    TAG+=_box$(printf '%s\n' "${BOX_ARGS[@]}" | sort | sha1sum | cut -c1-8)
+fi
 WORK=${WORKDIR:-build/$TAG}
 PLAN=$WORK/tol$TOL
 OUT_TABLE=${OUT_TABLE:-tables/norm_$TAG.h5}
@@ -68,6 +79,7 @@ SBATCH_ARGS=()
 NG=("$PYTHON" python/normgrid.py)
 NP=("$PYTHON" python/normplan.py)
 REGION=("$EP_MIN" "$EP_MAX" "$EQ_MIN" "$EQ_MAX")
+BOXOPT=(); [[ ${#BOX_ARGS[@]} -gt 0 ]] && BOXOPT=(--box "${BOX_ARGS[@]}")
 
 array() {   # array SPEC CHUNK_SIZE RESULTS_DIR: an sbatch array over the spec's chunks, waited for
     local spec=$1 size=$2 out=$3 n job
@@ -100,7 +112,9 @@ check_tasks() {   # check_tasks JOB N: fail unless all N tasks of array JOB are 
 }
 
 echo "== 1. study: how many nodes does each axis need? ($TAG)"
-"${NP[@]}" points --band "$BAND" --region "${REGION[@]}" --epsrel "$EPSREL" --out "$WORK/study.json"
+"${NP[@]}" points --band "$BAND" --region "${REGION[@]}" --epsrel "$EPSREL" ${BOXOPT[@]+"${BOXOPT[@]}"} \
+    --out "$WORK/study.json"
+[[ -n "${BOX:-}" ]] && echo "   box: $BOX"
 array "$WORK/study.json" "$STUDY_CHUNK" "$WORK/study_results"
 
 echo "== 2. plan: node counts for tol $TOL"
@@ -109,6 +123,7 @@ echo "== 2. plan: node counts for tol $TOL"
 
 echo "== 3. grid and held-out points"
 "${NG[@]}" make-random-spec --band "$BAND" --n "$HELDOUT" --region "${REGION[@]}" --epsrel "$EPSREL" \
+    ${BOXOPT[@]+"${BOXOPT[@]}"} \
     --out "$WORK/held.json"
 array "$WORK/held.json" "$HELD_CHUNK" "$WORK/held_results" &
 held_pid=$!

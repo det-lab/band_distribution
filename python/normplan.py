@@ -149,6 +149,8 @@ def main(argv=None):
     p.add_argument("--region", nargs=4, type=float, required=True, metavar=("EP_MIN", "EP_MAX", "EQ_MIN", "EQ_MAX"))
     p.add_argument("--epsrel", type=float, required=True, help="per-point quadrature tolerance, e.g. 1e-7")
     p.add_argument("--baselines", type=int, default=3)
+    p.add_argument("--box", nargs="+", default=None, metavar="AXIS=LO:HI",
+                   help="replace axes of the band's default box, e.g. V=2.5:4 dq=0:0.42")
     p.add_argument("--out", required=True)
 
     p = sub.add_parser("analyze", help="study results -> grid spec + report")
@@ -165,7 +167,8 @@ def main(argv=None):
 
     a = ap.parse_args(argv)
     if a.cmd == "points":
-        spec = make_study_spec(a.band, tuple(a.region), a.epsrel, n_baselines=a.baselines)
+        spec = make_study_spec(a.band, tuple(a.region), a.epsrel, n_baselines=a.baselines,
+                               box=ng.parse_box(a.box, a.band) if a.box else None)
         ng.save_spec(spec, a.out)
         print(f"{a.out}: {ng.n_points(spec)} study points ({len(spec['study']['axes'])} axes x "
               f"{a.baselines} baselines x {STUDY_NODES} nodes)")

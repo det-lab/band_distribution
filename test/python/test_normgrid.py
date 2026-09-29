@@ -168,6 +168,81 @@ er_held = ng.make_random_spec("ER", 40, seed=3)
 check("ER held-out points stay inside the ER F0 box",
       all(0.1 <= ng.coords_at(er_held, i)["F0"] <= 0.35 for i in range(40)))
 
+# ---- out-of-box errors carry what is needed to act on them ----
+try:
+    table(**dict(mid, V=3.9))
+    e = None
+except ng.OutOfBoxError as err:
+    e = err
+check("OutOfBoxError names the axis, value, box and query",
+      e is not None and e.axis == "V" and e.value == 3.9 and e.box == table.box["V"] and e.query["V"] == 3.9)
+check("OutOfBoxError message says to check the prior at setup", e is not None and "check_prior" in str(e))
+
+# ---- MCMC setup: prior vs the table's box ----
+design = dict(k=(0.13, 0.22), F0=(1e-5, 1.0), V=(2.7, 3.3), p0=(0.2 * ng.P0_MEAN, 1.8 * ng.P0_MEAN),
+              p10=(0.3, 0.6), q0=(0.2 * ng.Q0_MEAN, 1.8 * ng.Q0_MEAN), q10=(0.2, 0.4))
+table.check_prior(design)
+check("the prior the default box was designed from is covered (q0 above 0.4 is cut by q10 >= q0)", True)
+req = table.required_box(design)
+check("required box: q0 capped at max q10", req["q0"][1] == 0.4)
+check("required box: dp = [p10_lo - p0_hi, p10_hi - p0_lo]",
+      np.allclose(req["dp"], (0.3 - 1.8 * ng.P0_MEAN, 0.6 - 0.2 * ng.P0_MEAN)))
+check("required box: dq starts at 0 when q10 and q0 overlap", req["dq"][0] == 0.0)
+tb = table.table_bounds()
+table.check_prior(tb)
+check("table_bounds() is itself covered", True)
+check("table_bounds() contains the design prior's p10/q10",
+      tb["p10"][0] <= 0.3 and tb["p10"][1] >= 0.6 and tb["q10"][0] <= 0.2 and tb["q10"][1] >= 0.4)
+
+
+def prior_error(bounds):
+    try:
+        table.check_prior(bounds)
+    except ng.PriorNotCoveredError as err:
+        return str(err)
+    return None
+
+
+msg = prior_error(dict(design, V=(2.5, 4.0), q10=(0.2, 0.47)))
+check("wide prior: every short axis is listed", msg is not None and "V: prior reaches" in msg and "dq: prior reaches" in msg
+      and "k: prior" not in msg)
+check("wide prior: q10 above 0.4 lifts the q0 cap, so q0 is short too", msg is not None and "q0: prior reaches" in msg)
+check("wide prior: rebuild command with BOX rounded outward",
+      msg is not None and 'BOX="V=2.5:4 q0=0.04743:0.427 dq=0:0.4226"' in msg and "sbatch slurm/build_table.job NR" in msg)
+hint = msg.split("BOX=\"")[1].split("\"")[0] if msg else ""
+wider = ng.parse_box(hint, "NR")
+check("the suggested box covers the prior", wider["V"][0] <= 2.5 and wider["V"][1] >= 4.0
+      and wider["dq"][1] >= 0.47 - 0.2 * ng.Q0_MEAN)
+check("unbounded prior is an error of its own", "unbounded" in (prior_error(dict(design, V=(2.7, float("inf")))) or ""))
+check("missing parameter is an error", "k: no prior bounds" in (prior_error({p: v for p, v in design.items() if p != "k"}) or ""))
+check("a range for fixed Z is an error", "fixes Z" in (prior_error(dict(design, Z=(30.0, 34.0))) or ""))
+check("the fixed Z value itself is fine", prior_error(dict(design, Z=32.0)) is None)
+check("empty prior (q10 entirely below q0) is an error", "empty" in (prior_error(dict(design, q0=(0.3, 0.4), q10=(0.1, 0.2))) or ""))
+
+# starting points (e.g. an emcee walker ball)
+walkers = {p: rng.uniform(*tb[p], 64) for p in table.params()}
+walkers["p10"] = np.maximum(walkers["p10"], walkers["p0"])
+walkers["q10"] = np.maximum(walkers["q10"], walkers["q0"])
+table.check_points(walkers)
+check("points inside the box pass", True)
+walkers["V"][[3, 7]] = 3.5
+try:
+    table.check_points(walkers)
+    msg = None
+except ng.PriorNotCoveredError as err:
+    msg = str(err)
+check("points outside: counted per axis, first one named", msg is not None and "2 of 64" in msg and "point 3" in msg)
+
+# box specs
+check("parse_box replaces only the given axes", ng.parse_box("V=2.5:4", "ER")["V"] == (2.5, 4.0)
+      and ng.parse_box("V=2.5:4", "ER")["F0"] == (0.1, 0.35))
+check("parse_box rejects an axis the band lacks", raises(ValueError, lambda: ng.parse_box("k=0.1:0.2", "ER")))
+check("parse_box rejects LO >= HI", raises(ValueError, lambda: ng.parse_box("V=3:2", "NR")))
+check("format_box_range rounds outward", ng.format_box_range(0.0474369, 0.4225631) == "0.04743:0.4226")
+p10r, q10r = ng.x10_ranges(ng.default_box("NR"))
+check("x10_ranges of the default box contain the design p10/q10", p10r[0] <= 0.3 and p10r[1] >= 0.6
+      and q10r[0] <= 0.2 and q10r[1] >= 0.4)
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

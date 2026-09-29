@@ -1,0 +1,4 @@
+{
+  "_comment": "Published normalization tables: name -> Zenodo URL + SHA-256. Maintained with `python python/normtables.py register`; see python/normtables.py.",
+  "tables": {}
+}

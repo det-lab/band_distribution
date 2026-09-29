@@ -87,6 +87,20 @@ def default_box(band):
     """DEFAULT_BOX with the band's overrides applied."""
     return {**DEFAULT_BOX, **BAND_BOX_OVERRIDES.get(band, {})}
 
+
+def x10_ranges(box):
+    """The widest p10 and q10 ranges a box covers together with its full p0
+    and q0 ranges, for a prior that enforces p10 >= p0 and q10 >= q0:
+    ((p10_lo, p10_hi), (q10_lo, q10_hi)).  Every p10 in the range with every
+    p0 must give dp = p10 - p0 inside the dp range: p10_lo >= p0_hi + dp_lo
+    unless dp_lo == 0 (then p10 >= p0 is the only lower limit), and
+    p10_hi <= p0_lo + dp_hi."""
+    out = []
+    for x0, d in (("p0", "dp"), ("q0", "dq")):
+        (x0lo, x0hi), (dlo, dhi) = box[x0], box[d]
+        out.append((float(x0hi + dlo if dlo > 0 else x0lo), float(x0lo + dhi)))
+    return tuple(out)
+
 # Node counts per axis that keep the worst-case interpolation error of the
 # default box near 1e-7 per axis (~1e-6 total, i.e. ~0.02 in the log-
 # likelihood at 20,000 events).  They depend on the REGION: these come from
@@ -111,7 +125,18 @@ DEFAULT_REGION = (2.0, 200.0, 4.0, 100.0)
 
 
 class OutOfBoxError(ValueError):
-    """A query lies outside the box a table was built for."""
+    """A query lies outside the box a table was built for.  Carries the axis,
+    its value and range, the full query and the table's file, so a crash in
+    the middle of an MCMC run says everything needed to act on it."""
+
+    def __init__(self, message, *, axis=None, value=None, box=None, query=None, source=""):
+        super().__init__(message)
+        self.axis, self.value, self.box, self.query, self.source = axis, value, box, query, source
+
+
+class PriorNotCoveredError(ValueError):
+    """An MCMC prior (or a set of starting points) reaches outside a table's
+    box; raised at setup by NormInterpolator.check_prior / check_points."""
 
 
 # ---------------------------------------------------------------------------
@@ -471,9 +496,182 @@ class NormInterpolator:
             lo, hi = self.box[a]
             tol = 1e-12 * (hi - lo)
             if not (lo - tol <= x <= hi + tol):          # also catches NaN
-                raise OutOfBoxError(f"{a}={x!r} outside the table's range [{lo}, {hi}]")
+                query = {n: v for n, v in (("k", k), ("F0", F0), ("V", V), ("p0", p0), ("p10", p10),
+                                           ("q0", q0), ("q10", q10)) if v is not None}
+                raise OutOfBoxError(
+                    f"{a}={x!r} outside the range [{lo:.6g}, {hi:.6g}] of the {self.band} table "
+                    f"{self.source or '(in memory)'}\n  query: "
+                    + " ".join(f"{n}={v:.6g}" for n, v in query.items())
+                    + "\n  The table covers the prior it was built for, so a query outside it means the "
+                      "MCMC prior does not match the table, or a NaN/bug.  Check the prior at setup "
+                      "(PpqPDF(prior_bounds=...) or table.check_prior), and have log_prob return -inf "
+                      "for points outside the prior BEFORE calling the likelihood.",
+                    axis=a, value=x, box=(lo, hi), query=query, source=self.source)
             coef = cheb.chebval(self._to_unit(d, np.float64(min(max(x, lo), hi))), coef)   # contracts the first remaining axis
         return float(coef)
+
+    # ---- MCMC setup checks: is the prior (are the starting points) inside the box? ----
+
+    def params(self):
+        """The physical parameters this table varies, in PpqPDF's keyword names."""
+        return (("k",) if self.band == "NR" else ()) + ("F0", "V", "p0", "p10", "q0", "q10")
+
+    def table_bounds(self):
+        """A physical-parameter prior box this table is guaranteed to cover,
+        {param: (lo, hi)}, for a prior that also enforces p10 >= p0 and
+        q10 >= q0 (the PDF is undefined otherwise).  Keeps the full p0/q0
+        ranges and gives p10/q10 the widest ranges compatible with them, so
+        it can be used directly as an MCMC's hard prior bounds.  Z and eps
+        are fixed by the table (self.fixed), not ranges."""
+        b = {a: self.box[a] for a in ("k", "F0", "V", "p0", "q0") if a in self.box}
+        b["p10"], b["q10"] = x10_ranges(self.box)
+        return {p: tuple(float(v) for v in b[p]) for p in self.params()}
+
+    def required_box(self, bounds):
+        """The axis box a prior with these physical bounds reaches, given that
+        it enforces p10 >= p0 and q10 >= q0: {axis: (lo, hi)}.  bounds maps
+        each of self.params() to (lo, hi); Z/eps may be given as the fixed
+        value.  Raises PriorNotCoveredError for a missing or unbounded
+        parameter, a range where Z/eps are fixed, or an empty prior."""
+        problems = []
+        for name, v in self.fixed.items():
+            if name in bounds:
+                lo, hi = (bounds[name], bounds[name]) if np.isscalar(bounds[name]) else bounds[name]
+                if not (abs(lo - v) <= 1e-12 * max(1.0, abs(v)) and abs(hi - v) <= 1e-12 * max(1.0, abs(v))):
+                    problems.append(f"{name}: the table fixes {name}={v}; the prior gives {bounds[name]}")
+        extra = sorted(set(bounds) - set(self.params()) - set(self.fixed) - {"Z"})
+        if extra:
+            problems.append(f"the {self.band} table does not depend on {', '.join(extra)}"
+                            + (" (the ER band has no k)" if "k" in extra else ""))
+        b = {}
+        for p in self.params():
+            if p not in bounds or bounds[p] is None:
+                problems.append(f"{p}: no prior bounds given (the table varies it)")
+                continue
+            lo, hi = (float(v) if v is not None else np.nan for v in bounds[p])
+            if not (np.isfinite(lo) and np.isfinite(hi)):
+                problems.append(f"{p}: prior [{lo}, {hi}] is unbounded; no table can cover it -- truncate "
+                                "the prior (e.g. a Gaussian at +/-4 sigma) and reject outside it in log_prob")
+            elif lo > hi:
+                problems.append(f"{p}: prior lower bound {lo} is above the upper bound {hi}")
+            else:
+                b[p] = (lo, hi)
+        if problems:
+            raise PriorNotCoveredError(f"prior bounds unusable with the {self.band} table "
+                                       f"{self.source or '(in memory)'}:\n  " + "\n  ".join(problems))
+        req = {a: b[a] for a in ("k", "F0", "V") if a in b}
+        for x, d in (("p", "dp"), ("q", "dq")):
+            (x0lo, x0hi), (x1lo, x1hi) = b[x + "0"], b[x + "10"]
+            x0hi_eff = min(x0hi, x1hi)            # x10 >= x0 caps x0 at the largest x10
+            if x1hi < x0lo:
+                raise PriorNotCoveredError(f"{x}10 <= {x1hi} < {x}0 >= {x0lo}: the prior is empty "
+                                           f"under {x}10 >= {x}0")
+            req[x + "0"] = (x0lo, x0hi_eff)
+            req[d] = (max(0.0, x1lo - x0hi_eff), x1hi - x0lo)
+        return {a: req[a] for a in self.axes}
+
+    def check_prior(self, bounds, *, rebuild_hint=True):
+        """Raise PriorNotCoveredError unless an MCMC prior with these physical
+        bounds (see required_box) stays inside the table's box.  Call it once
+        at MCMC setup; the message lists every axis that falls short and the
+        box to rebuild the table with."""
+        req = self.required_box(bounds)
+        short = {a: r for a, r in req.items() if not self._covers(a, r)}
+        if short:
+            lines = [f"{a}: prior reaches [{r[0]:.6g}, {r[1]:.6g}], table covers "
+                     f"[{self.box[a][0]:.6g}, {self.box[a][1]:.6g}]" for a, r in short.items()]
+            msg = (f"the MCMC prior is not covered by the {self.band} table {self.source or '(in memory)'}"
+                   " (dp = p10 - p0, dq = q10 - q0):\n  " + "\n  ".join(lines))
+            if rebuild_hint:
+                msg += ("\nRestrict the prior to the table (table_bounds() gives a covered prior box), or "
+                        "rebuild it with:\n  " + self.rebuild_command(short))
+            raise PriorNotCoveredError(msg)
+
+    def check_points(self, points):
+        """Raise PriorNotCoveredError unless every point is inside the box,
+        e.g. an MCMC's starting walker positions.  points: {param: array}
+        with every one of self.params() (Z/eps optional, checked against the
+        table's fixed values)."""
+        missing = [p for p in self.params() if p not in points]
+        if missing:
+            raise PriorNotCoveredError(f"points lack {', '.join(missing)}")
+        v = {p: np.atleast_1d(np.asarray(points[p], dtype=float)) for p in self.params()}
+        n = len(next(iter(v.values())))
+        if any(len(a) != n for a in v.values()):
+            raise PriorNotCoveredError("points: every parameter needs the same number of values")
+        for name, fixed in self.fixed.items():
+            if name in points and np.any(np.abs(np.asarray(points[name], dtype=float) - fixed)
+                                         > 1e-12 * max(1.0, abs(fixed))):
+                raise PriorNotCoveredError(f"points: {name} differs from the {fixed} this table was built for")
+        c = {"F0": v["F0"], "V": v["V"], "p0": v["p0"], "dp": v["p10"] - v["p0"],
+             "q0": v["q0"], "dq": v["q10"] - v["q0"]}
+        if "k" in v:
+            c["k"] = v["k"]
+        bad, lines = np.zeros(n, dtype=bool), []
+        for a in self.axes:
+            lo, hi = self.box[a]
+            tol = 1e-12 * (hi - lo)
+            out = ~((c[a] >= lo - tol) & (c[a] <= hi + tol))      # NaN counts as out
+            if out.any():
+                bad |= out
+                lines.append(f"{a}: {out.sum()} of {n} points outside [{lo:.6g}, {hi:.6g}] "
+                             f"(they reach [{np.nanmin(c[a]):.6g}, {np.nanmax(c[a]):.6g}])")
+        if bad.any():
+            raise PriorNotCoveredError(
+                f"{bad.sum()} of {n} points are outside the {self.band} table {self.source or '(in memory)'} "
+                "(dp = p10 - p0, dq = q10 - q0):\n  " + "\n  ".join(lines)
+                + f"\n  first: point {int(np.flatnonzero(bad)[0])}\n"
+                  "Start the walkers inside the prior, and the prior inside the table (check_prior).")
+
+    def _covers(self, a, r):
+        lo, hi = self.box[a]
+        tol = 1e-12 * (hi - lo)
+        return lo - tol <= r[0] and r[1] <= hi + tol
+
+    def rebuild_command(self, need):
+        """The build_table command for a table whose box also covers `need`
+        ({axis: (lo, hi)}): BOX lists every axis that then differs from the
+        band's default box, rounded outward."""
+        box = {a: (min(self.box[a][0], need[a][0]), max(self.box[a][1], need[a][1])) if a in need
+               else self.box[a] for a in self.axes}
+        default = default_box(self.band)
+        spec = " ".join(f"{a}={format_box_range(*box[a])}" for a in self.axes
+                        if not np.allclose(box[a], default[a], rtol=1e-9, atol=0))
+        region = " ".join(f"{r:g}" for r in self.region)
+        return f'BOX="{spec}" sbatch slurm/build_table.job {self.band} {region}'
+
+
+def _round_out(x, up, sig=4):
+    """x rounded to `sig` significant figures, up or down (never inward)."""
+    if x == 0 or not np.isfinite(x):
+        return float(x)
+    scale = 10.0 ** (math.floor(math.log10(abs(x))) - sig + 1)
+    return float((math.ceil if up else math.floor)(x / scale - (1e-9 if up else -1e-9)) * scale)
+
+
+def format_box_range(lo, hi):
+    """'lo:hi' with lo rounded down and hi up, as BOX= and --box take it."""
+    return f"{_round_out(lo, False):.6g}:{_round_out(hi, True):.6g}"
+
+
+def parse_box(items, band):
+    """['q0=0.04:0.45', 'dq=0:0.42', ...] (or one space-separated string) ->
+    the band's default box with those axes replaced."""
+    if isinstance(items, str):
+        items = items.split()
+    box = dict(default_box(band))
+    for item in items:
+        try:
+            axis, rng = item.split("=")
+            lo, hi = (float(v) for v in rng.split(":"))
+        except ValueError:
+            raise ValueError(f"box entry {item!r} is not AXIS=LO:HI") from None
+        if axis not in BAND_AXES[band]:
+            raise ValueError(f"{axis!r} is not an axis of the {band} table ({', '.join(BAND_AXES[band])})")
+        if not lo < hi:
+            raise ValueError(f"box entry {item!r}: need LO < HI")
+        box[axis] = (lo, hi)
+    return box
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +731,8 @@ def main(argv=None):
                    help="fit region the table normalizes over; must match the region PpqPDF is built with")
     p.add_argument("--epsrel", type=float, required=True,
                    help="quadrature convergence tolerance per point, e.g. 1e-7")
+    p.add_argument("--box", nargs="+", default=None, metavar="AXIS=LO:HI",
+                   help="replace axes of the band's default box, e.g. V=2.5:4 dq=0:0.42")
     p.add_argument("--out", required=True)
 
     p = sub.add_parser("make-random-spec", help="write a held-out validation point set")
@@ -542,6 +742,9 @@ def main(argv=None):
     p.add_argument("--region", nargs=4, type=float, required=True, metavar=("EP_MIN", "EP_MAX", "EQ_MIN", "EQ_MAX"),
                    help="must match the region of the table these points validate")
     p.add_argument("--epsrel", type=float, required=True)
+    p.add_argument("--box", nargs="+", default=None, metavar="AXIS=LO:HI",
+                   help="as make-spec's; the points are then drawn over the p10/q10 ranges that box "
+                        "covers (x10_ranges) instead of the default prior's")
     p.add_argument("--out", required=True)
 
     p = sub.add_parser("info", help="print a spec's size")
@@ -575,11 +778,18 @@ def main(argv=None):
 
     if a.cmd == "make-spec":
         nodes = _parse_kv_ints(a.nodes) if a.nodes else RECOMMENDED_NODES[a.band]
-        spec = make_grid_spec(a.band, nodes, region=tuple(a.region), epsrel=a.epsrel)
+        spec = make_grid_spec(a.band, nodes, region=tuple(a.region), epsrel=a.epsrel,
+                              box=parse_box(a.box, a.band) if a.box else None)
         save_spec(spec, a.out)
         print(f"{a.out}: {n_points(spec)} points, shape {grid_shape(spec)}")
     elif a.cmd == "make-random-spec":
-        spec = make_random_spec(a.band, a.n, a.seed, region=tuple(a.region), epsrel=a.epsrel)
+        if a.box:
+            box = parse_box(a.box, a.band)
+            p10, q10 = x10_ranges(box)
+            spec = make_random_spec(a.band, a.n, a.seed, region=tuple(a.region), epsrel=a.epsrel,
+                                    box=box, p10_range=p10, q10_range=q10)
+        else:
+            spec = make_random_spec(a.band, a.n, a.seed, region=tuple(a.region), epsrel=a.epsrel)
         save_spec(spec, a.out)
         print(f"{a.out}: {a.n} held-out points")
     elif a.cmd == "info":

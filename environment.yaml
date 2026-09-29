@@ -25,6 +25,8 @@ dependencies:
   - pandas
   # h5py: reading/writing the precomputed normalization tables (python/normgrid.py)
   - h5py
+  # pooch: fetching the published tables by name (python/normtables.py)
+  - pooch
   - pip
   - pip:
     - equibin

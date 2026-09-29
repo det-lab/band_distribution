@@ -49,6 +49,21 @@ NORMGRID_FAKE=smooth BAND_PYTHON=false WORKDIR=$TMP/f OUT_TABLE=$TMP/t4.h5 slurm
 grep -q "not every one of its .* tasks COMPLETED" $TMP/taskfail.log; check "failed task: says which array job" $?
 [[ ! -e $TMP/f/tol1e-7/plan.json ]]; check "failed task: stopped before the plan" $?
 
-# 6. bad usage
+# 6. a custom box: tagged with its hash, and used by every spec
+NORMGRID_FAKE=smooth BOX="V=2.6:3.4 dq=0:0.4" WORKDIR=$TMP/b OUT_TABLE=$TMP/b.h5 slurm/build_table.sh ER 2.5 350 0.75 200 > $TMP/box.log 2>&1
+check "custom box: chain succeeds" $?
+grep -q "(ER_ep2.5-350_eq0.75-200_box[0-9a-f]\{8\})" $TMP/box.log; check "custom box: tag carries the box hash" $?
+python - <<PY
+import json, sys
+boxes = [json.load(open(f"$TMP/b/{f}"))["box"] for f in ("study.json", "held.json", "tol1e-7/spec.json")]
+sys.exit(0 if all(b["V"] == [2.6, 3.4] and b["dq"] == [0.0, 0.4] and b["F0"] == [0.1, 0.35] for b in boxes) else 1)
+PY
+check "custom box: study, held-out and grid specs all use it" $?
+jobs_before=$(cat $MOCK_SLURM_DIR/last_job)
+BOX="k=0.1:0.2" WORKDIR=$TMP/bad slurm/build_table.sh ER 2.5 350 0.75 200 > $TMP/badbox.log 2>&1
+[[ $? -ne 0 ]] && grep -q "not an axis of the ER table" $TMP/badbox.log && [[ $(cat $MOCK_SLURM_DIR/last_job) == "$jobs_before" ]]
+check "bad box: fails before anything is submitted" $?
+
+# 7. bad usage
 slurm/build_table.sh ER 2.5 350 0.75 > /dev/null 2>&1; [[ $? -eq 2 ]]; check "wrong argument count is a usage error" $?
 exit $fail

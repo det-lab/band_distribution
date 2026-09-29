@@ -19,7 +19,21 @@ numerics.
 For MCMC, pass precomputed normalization tables (python/normgrid.py,
 built once on a batch system) as ppqn_table/ppqg_table: the integral then
 costs tens of microseconds instead of ~2 s, and raises rather than ever
-extrapolating outside the table's parameter box.
+extrapolating outside the table's parameter box.  A table is a file path or
+a registered name (python/normtables.py fetches and caches it).
+
+At MCMC setup, pass the prior's hard bounds as prior_bounds so a prior that
+reaches outside a table fails at construction, with the box to rebuild the
+table with, rather than hours into the run; check the starting walker
+positions with check_points.  table_bounds() gives a prior box the tables
+cover.  In log_prob, reject points outside the prior before calling the
+likelihood:
+
+    def log_prob(theta):
+        lp = log_prior(theta)
+        if not np.isfinite(lp):
+            return -np.inf          # never reaches the table
+        return lp + log_likelihood(theta)
 """
 
 import os
@@ -44,8 +58,19 @@ class PpqPDF:
         hence the norm_ prefix.  Required for any band without a table.
     ppqn_table, ppqg_table : path, normgrid.NormInterpolator, or None
         Precomputed normalization table for that band (built by
-        python/normgrid.py for exactly this region).  If given, ppqn_integral/
-        ppqg_integral interpolate it instead of running the quadrature.
+        python/normgrid.py for exactly this region), or a name registered in
+        python/table_registry.json.  If given, ppqn_integral/ppqg_integral
+        interpolate it instead of running the quadrature.
+    prior_bounds : dict or None
+        The MCMC prior's hard bounds, {param: (lo, hi)} for k (NR), F0, V,
+        p0, p10, q0, q10 (Z/eps may be given as their fixed values).  Keys
+        shared by both bands go at the top level; a band's own parameters
+        (e.g. its Fano factor) go under "NR"/"ER" and override them:
+            {"V": (2.7, 3.3), ..., "NR": {"k": (0.13, 0.22), "F0": (1e-5, 1)},
+                                   "ER": {"F0": (0.1, 0.35)}}
+        Checked against every table given, assuming the prior also enforces
+        p10 >= p0 and q10 >= q0; raises normgrid.PriorNotCoveredError if it
+        reaches outside one.
     n_workers : int or None
         Threads used for large batched PpqN_vector/PpqG_vector calls;
         see make_ppqn_pdf.
@@ -53,7 +78,7 @@ class PpqPDF:
 
     def __init__(self, ep_min, ep_max, eq_min, eq_max, ep_data, eq_data, *,
                  norm_epsrel=None, norm_epsabs=None,
-                 ppqn_table=None, ppqg_table=None,
+                 ppqn_table=None, ppqg_table=None, prior_bounds=None,
                  n_workers=None):
         self.ep_min, self.ep_max = ep_min, ep_max
         self.eq_min, self.eq_max = eq_min, eq_max
@@ -64,12 +89,47 @@ class PpqPDF:
         self.n_workers = n_workers
         self.ppqn_table = self._load_table(ppqn_table, "NR")
         self.ppqg_table = self._load_table(ppqg_table, "ER")
+        if prior_bounds is not None:
+            if not self._tables():
+                raise ValueError("prior_bounds is checked against the tables; no table was given")
+            for t in self._tables():
+                t.check_prior(self._band_view(prior_bounds, t.band))
+
+    def _tables(self):
+        return [t for t in (self.ppqn_table, self.ppqg_table) if t is not None]
+
+    @staticmethod
+    def _band_view(d, band):
+        """The shared keys of d, overridden by d[band]; k only for NR."""
+        v = {p: x for p, x in d.items() if p not in ("NR", "ER")}
+        v.update(d.get(band, {}))
+        if band == "ER":
+            v.pop("k", None)
+        return v
+
+    def check_points(self, points):
+        """Raise normgrid.PriorNotCoveredError unless every point is inside
+        every table: e.g. the starting walker positions, {param: array} laid
+        out like prior_bounds (band-specific arrays under "NR"/"ER")."""
+        for t in self._tables():
+            t.check_points(self._band_view(points, t.band))
+
+    def table_bounds(self):
+        """{band: {param: (lo, hi)}}: a prior box each given table covers,
+        for a prior that enforces p10 >= p0 and q10 >= q0.  A parameter the
+        bands share (V, p0, p10, q0, q10) must lie in both."""
+        if not self._tables():
+            raise ValueError("no table was given")
+        return {t.band: t.table_bounds() for t in self._tables()}
 
     def _load_table(self, table, band):
         if table is None:
             return None
         import normgrid
         if not isinstance(table, normgrid.NormInterpolator):
+            if not os.path.exists(str(table)):
+                import normtables
+                table = normtables.fetch(table)
             table = normgrid.NormInterpolator.from_hdf5(table)
         if table.band != band:
             raise ValueError(f"table is for the {table.band} band, expected {band}")
