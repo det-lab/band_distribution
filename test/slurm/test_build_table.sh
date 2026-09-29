@@ -10,6 +10,7 @@ cd "$(dirname "$0")/../.."
 export PATH="$PWD/test/slurm:$PATH" BAND_NATIVE=1 PYTHON=${PYTHON:-python}
 export BAND_PYTHON=$PYTHON
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+export MOCK_SLURM_DIR=$TMP
 fail=0
 check() { if [[ $2 -eq 0 ]]; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
 common="BAND=ER GRID_CHUNK=5000 STUDY_CHUNK=100 HELD_CHUNK=50 HELDOUT=60"
@@ -34,7 +35,7 @@ check "re-run succeeds" $?
 # 3. an impossible acceptance level fails the check and says how to retry
 NORMGRID_FAKE=smooth WORKDIR=$TMP/w OUT_TABLE=$TMP/t2.h5 ACCEPT=1e-30 slurm/build_table.sh ER 2.5 350 0.75 200 > $TMP/fail.log 2>&1
 [[ $? -eq 1 ]]; check "ACCEPT too strict => exit status 1" $?
-grep -q "TOL=2e-08 slurm/build_table.sh ER" $TMP/fail.log; check "failure message suggests a tighter TOL" $?
+grep -q "TOL=2e-08 sbatch slurm/build_table.job ER" $TMP/fail.log; check "failure message suggests a tighter TOL" $?
 
 # 4. an axis that never converges stops the chain before the big grid is built
 NORMGRID_FAKE=kink WORKDIR=$TMP/k OUT_TABLE=$TMP/t3.h5 slurm/build_table.sh NR 2.5 350 0.75 200 > $TMP/kink.log 2>&1
@@ -42,6 +43,12 @@ NORMGRID_FAKE=kink WORKDIR=$TMP/k OUT_TABLE=$TMP/t3.h5 slurm/build_table.sh NR 2
 grep -q "not resolved by 33 nodes" $TMP/kink.log; check "kink: says which axis and why" $?
 [[ ! -e $TMP/k/tol1e-7/spec.json ]]; check "kink: no grid spec was written" $?
 
-# 5. bad usage
+# 5. a failed array task stops the chain, although (as on Alderaan) sbatch --wait exits 0
+NORMGRID_FAKE=smooth BAND_PYTHON=false WORKDIR=$TMP/f OUT_TABLE=$TMP/t4.h5 slurm/build_table.sh ER 2.5 350 0.75 200 > $TMP/taskfail.log 2>&1
+[[ $? -ne 0 ]]; check "failed task: chain stops with an error" $?
+grep -q "not every one of its .* tasks COMPLETED" $TMP/taskfail.log; check "failed task: says which array job" $?
+[[ ! -e $TMP/f/tol1e-7/plan.json ]]; check "failed task: stopped before the plan" $?
+
+# 6. bad usage
 slurm/build_table.sh ER 2.5 350 0.75 > /dev/null 2>&1; [[ $? -eq 2 ]]; check "wrong argument count is a usage error" $?
 exit $fail

@@ -1,0 +1,34 @@
+#!/bin/bash
+# Run slurm/build_table.sh as a Slurm job of its own, the way to build a
+# table on the cluster: this single-core job only submits the array stages
+# (sbatch --wait), checks them with sacct, and runs the light Python steps.
+#
+#   sbatch slurm/build_table.job NR 2.5 350 0.75 200
+#   TOL=1e-5 HELDOUT=20 sbatch slurm/build_table.job ER 2.5 350 0.75 200
+#
+# Submit from the repository root: the environment at submission (TOL,
+# HELDOUT, BAND_SIF, BAND_PYTHON_FROM_REPO, ...) is passed on to
+# build_table.sh and from there to the array tasks.  ACCOUNT, PARTITION and
+# TIME set the ARRAY tasks' sbatch options (Alderaan defaults below); this
+# job's own are the #SBATCH lines, and the time limit must outlast the chain.
+# The job exits with build_table.sh's status (1 if the held-out check fails).
+
+#SBATCH --job-name=build_table
+#SBATCH --account=dark-matter-salting
+#SBATCH --partition=math-alderaan
+#SBATCH --time=7-00:00:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=4G
+#SBATCH --output=logs/build_table_%j.out
+
+set -euo pipefail
+# Slurm runs a spooled copy of this file, so $0 is no guide to the repo
+cd "${SLURM_SUBMIT_DIR:?submit with sbatch, from the repository root}"
+[[ -x slurm/build_table.sh ]] || { echo "submit from the repository root (no slurm/build_table.sh in $PWD)" >&2; exit 2; }
+
+export ACCOUNT=${ACCOUNT:-dark-matter-salting}
+export PARTITION=${PARTITION:-math-alderaan-short}
+export TIME=${TIME:-08:00:00}
+
+echo "[$(date +%T)] build_table $* on $(hostname) at $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+exec slurm/build_table.sh "$@"

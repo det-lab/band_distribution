@@ -1,23 +1,29 @@
 #!/bin/bash
 # Stand-in for `sbatch` in tests: runs the script (or every task of --array=A-B[%T])
-# right here, one after another, and exits nonzero if any task does -- which is what
-# `sbatch --wait` reports.  Only the options slurm/build_table.sh uses are understood.
+# right here, one after another.  Like `sbatch --wait` on Alderaan it exits 0 even
+# when tasks fail; each task's state goes to $MOCK_SLURM_DIR for the mock sacct.
+# Only the options slurm/build_table.sh uses are understood.
 set -u
-ARRAY=""
+ARRAY="" PARSABLE=0
 while [[ $# -gt 0 ]]; do
     case $1 in
         --array=*) ARRAY=${1#--array=}; shift ;;
+        --parsable) PARSABLE=1; shift ;;
         --*) shift ;;                 # --wait, --account=..., --partition=..., --time=..., --job-name=...
         *) break ;;
     esac
 done
 SCRIPT=$1; shift
+DIR=${MOCK_SLURM_DIR:?set MOCK_SLURM_DIR}
+JOB=$(( $(cat "$DIR/last_job" 2>/dev/null || echo 100) + 1 )); echo "$JOB" > "$DIR/last_job"
 LO=0 HI=0
 if [[ -n "$ARRAY" ]]; then A=${ARRAY%%%*}; LO=${A%-*}; HI=${A#*-}; fi
-rc=0
+[[ $PARSABLE == 1 ]] && echo "INFO: a wrapper line before the job id, as on Alderaan"
 for ((i = LO; i <= HI; i++)); do
-    if [[ -n "$ARRAY" ]]; then SLURM_ARRAY_TASK_ID=$i bash "$SCRIPT" "$@" >/dev/null || rc=1
-    else bash "$SCRIPT" "$@" || rc=1; fi
+    if [[ -n "$ARRAY" ]]; then SLURM_ARRAY_TASK_ID=$i bash "$SCRIPT" "$@" >/dev/null 2>&1
+    else bash "$SCRIPT" "$@"; fi
+    rc=$?
+    if [[ $rc -eq 0 ]]; then echo "${JOB}_$i|COMPLETED|0:0"; else echo "${JOB}_$i|FAILED|$rc:0"; fi >> "$DIR/sacct_$JOB"
 done
-echo "Submitted batch job 0 (mock; $SCRIPT array='${ARRAY}' rc=$rc)"
-exit $rc
+if [[ $PARSABLE == 1 ]]; then echo "$JOB"; else echo "Submitted batch job $JOB"; fi
+exit 0

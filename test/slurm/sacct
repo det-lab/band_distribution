@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stand-in for `sacct -j JOB ...`: prints the JobID|State|ExitCode rows the mock
+# sbatch recorded for JOB (the other options are ignored).
+set -u
+while [[ $# -gt 0 ]]; do
+    case $1 in -j) JOB=$2; shift 2 ;; *) shift ;; esac
+done
+cat "${MOCK_SLURM_DIR:?}/sacct_${JOB:?}" 2>/dev/null

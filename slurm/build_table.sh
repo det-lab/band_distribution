@@ -2,12 +2,12 @@
 # Build one normalization table end to end for a fit region: measure how many
 # nodes each axis needs, evaluate the grid, check it against held-out points.
 #
-#   slurm/build_table.sh BAND EP_MIN EP_MAX EQ_MIN EQ_MAX
-#   slurm/build_table.sh NR 2.5 350 0.75 200
+#   sbatch slurm/build_table.job BAND EP_MIN EP_MAX EQ_MIN EQ_MAX
+#   sbatch slurm/build_table.job NR 2.5 350 0.75 200
 #
 # Stages (each Slurm stage is `sbatch --wait slurm/normgrid.sbatch ...`, so
-# this script keeps running until the whole chain is done: run it in tmux/
-# screen, or as a long single-core job if your cluster lets jobs call sbatch):
+# this script keeps running until the whole chain is done, hence the driver
+# job slurm/build_table.job, which runs it with the arguments above):
 #   1. study   normplan.py points   -> ~700 integrals along each axis (array)
 #   2. plan    normplan.py analyze  -> node count per axis, grid spec, report
 #   3. grid    the tensor grid, and HELDOUT random validation points (arrays)
@@ -16,6 +16,8 @@
 # The light Python steps (plan, merge, validate) run with $PYTHON on the login
 # node, as slurm/submit_alderaan.sh does; the integrals run in the container
 # via normgrid.sbatch (BAND_SIF etc. are read there; BAND_NATIVE=1 works too).
+# Every array is checked with sacct once it ends: `sbatch --wait` exits 0 on
+# Alderaan even when tasks fail, so a failed task stops the chain here instead.
 #
 # Re-running is cheap and safe: `normgrid run` skips finished points.  If the
 # check fails, re-run with a tighter TOL (the message says which); the study
@@ -31,6 +33,8 @@
 #   THROTTLE=200  max concurrent tasks of one array
 #   MAX_POINTS=500000   refuse a bigger grid (says which axes are expensive)
 #   ACCOUNT= PARTITION= TIME=   passed to sbatch when set
+#   BAND_SIF=/scratch/$USER/containers/band.sif   the container (as in
+#                 normgrid.sbatch); checked here before anything is submitted
 #   WORKDIR=build/<tag>   OUT_TABLE=tables/norm_<tag>.h5   PYTHON=python3
 
 set -euo pipefail
@@ -51,6 +55,11 @@ PLAN=$WORK/tol$TOL
 OUT_TABLE=${OUT_TABLE:-tables/norm_$TAG.h5}
 mkdir -p logs "$WORK/study_results" "$WORK/held_results" "$PLAN/results" "$(dirname "$OUT_TABLE")"
 
+if [[ "${BAND_NATIVE:-0}" != "1" ]]; then
+    export BAND_SIF=${BAND_SIF:-/scratch/$USER/containers/band.sif}
+    [[ -f "$BAND_SIF" ]] || { echo "no container at $BAND_SIF: set BAND_SIF, or pull one with slurm/pull_container.job" >&2; exit 1; }
+fi
+
 SBATCH_ARGS=()
 [[ -n "${ACCOUNT:-}" ]] && SBATCH_ARGS+=(--account="$ACCOUNT")
 [[ -n "${PARTITION:-}" ]] && SBATCH_ARGS+=(--partition="$PARTITION")
@@ -61,12 +70,33 @@ NP=("$PYTHON" python/normplan.py)
 REGION=("$EP_MIN" "$EP_MAX" "$EQ_MIN" "$EQ_MAX")
 
 array() {   # array SPEC CHUNK_SIZE RESULTS_DIR: an sbatch array over the spec's chunks, waited for
-    local spec=$1 size=$2 out=$3 n
+    local spec=$1 size=$2 out=$3 n job
     n=$("${NG[@]}" chunks "$spec" --size "$size" | wc -l)
     echo "[$(date +%T)] $(basename "$spec"): $n array tasks of up to $size points"
-    sbatch --wait ${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"} --array=0-$((n - 1))%"$THROTTLE" \
-           --job-name="ng_${BAND}_$(basename "$spec" .json)" \
-           slurm/normgrid.sbatch "$spec" "$size" "$out"
+    # --parsable prints the job id, but Alderaan's sbatch wrapper may print
+    # INFO lines first: take the last line that is a job id
+    job=$(sbatch --parsable --wait ${SBATCH_ARGS[@]+"${SBATCH_ARGS[@]}"} --array=0-$((n - 1))%"$THROTTLE" \
+                 --job-name="ng_${BAND}_$(basename "$spec" .json)" \
+                 slurm/normgrid.sbatch "$spec" "$size" "$out" | grep -E '^[0-9]+(;|$)' | tail -1 | cut -d';' -f1 || true)
+    [[ -n "$job" ]] || { echo "sbatch did not report a job id for $spec" >&2; return 1; }
+    check_tasks "$job" "$n"
+}
+
+check_tasks() {   # check_tasks JOB N: fail unless all N tasks of array JOB are COMPLETED
+    local job=$1 n=$2 states bad try
+    # the accounting database can lag the end of the job by a few seconds
+    for try in 1 2 3 4 5 6; do
+        states=$(sacct -j "$job" -X -n -P -o JobID,State,ExitCode)
+        [[ $(grep -c . <<< "$states") -ge $n ]] && ! grep -qE '\|(PENDING|RUNNING|REQUEUED|COMPLETING)' <<< "$states" && break
+        sleep 10
+    done
+    bad=$(awk -F'|' '$2 != "COMPLETED"' <<< "$states")
+    if [[ $(grep -c . <<< "$states") -lt $n || -n "$bad" ]]; then
+        echo "array job $job: not every one of its $n tasks COMPLETED; see logs/normgrid_${job}_*.err" >&2
+        head -5 <<< "${bad:-$states}" >&2
+        return 1
+    fi
+    echo "[$(date +%T)] array job $job: all $n tasks COMPLETED"
 }
 
 echo "== 1. study: how many nodes does each axis need? ($TAG)"
@@ -94,7 +124,7 @@ else
     NEW_TOL=$("$PYTHON" -c "print(f'{$TOL / 4:.0e}')")
     echo "== FAILED the held-out check (worst error above ACCEPT=$ACCEPT); table kept at $OUT_TABLE" >&2
     echo "   the per-axis study cannot see cross terms; retry with more nodes:" >&2
-    echo "   TOL=$NEW_TOL slurm/build_table.sh $BAND $EP_MIN $EP_MAX $EQ_MIN $EQ_MAX" >&2
+    echo "   TOL=$NEW_TOL sbatch slurm/build_table.job $BAND $EP_MIN $EP_MAX $EQ_MIN $EQ_MAX" >&2
     echo "   (the study and held-out points are reused)" >&2
     exit 1
 fi

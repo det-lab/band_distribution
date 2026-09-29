@@ -39,7 +39,8 @@
 #          --retry-failed --epsrel 1e-6
 #
 # Environment (all optional):
-#   BAND_SIF         container image (default $HOME/band.sif, built from
+#   BAND_SIF         container image (default /scratch/$USER/containers/band.sif,
+#                    where slurm/pull_container.job puts it; or build one from
 #                    Dockerfile_intel or _llvm as in the README).  Set
 #                    BAND_NATIVE=1 to skip the container and use the repo's own
 #                    python/ and lib/ (i.e. you built the library on the cluster).
@@ -103,7 +104,9 @@ else
         BINDS+=(--bind "$PWD/python:/app/python")
     fi
 
-    RUN=("$CONTAINER_CMD" exec "${BINDS[@]}" --pwd "$PWD" "${BAND_SIF:-$HOME/band.sif}")
+    SIF=${BAND_SIF:-/scratch/$USER/containers/band.sif}
+    [[ -f "$SIF" ]] || { echo "no container at $SIF on $(hostname): set BAND_SIF" >&2; exit 1; }
+    RUN=("$CONTAINER_CMD" exec "${BINDS[@]}" --pwd "$PWD" "$SIF")
     PY=${BAND_PYTHON:-/opt/anaconda/envs/band/bin/python}
     NORMGRID=/app/python/normgrid.py
     export APPTAINERENV_LD_LIBRARY_PATH="/app/lib:/opt/anaconda/envs/band/lib"
