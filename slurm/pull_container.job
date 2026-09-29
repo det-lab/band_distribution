@@ -39,7 +39,7 @@ set -euo pipefail
 
 cd "$SLURM_SUBMIT_DIR" || exit 1
 
-IMAGE=${1:-docker://ghcr.io/pibion/band_distribution_llvm:9d251ee}
+IMAGE=${1:-docker://ghcr.io/det-lab/band_distribution_llvm:9d251ee}
 DEST=${2:-/scratch/$USER/containers/band.sif}
 
 SCRATCH=/scratch/$USER/singularity

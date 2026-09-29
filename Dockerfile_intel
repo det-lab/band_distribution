@@ -71,7 +71,7 @@ COPY python /tmp/band_src/python/
 RUN if [ -n "$GIT_REF" ]; then \
         echo "Building band_distribution @ $GIT_REF (overriding local checkout)" && \
         rm -rf /tmp/band_src && \
-        git clone https://github.com/pibion/band_distribution.git /tmp/band_src && \
+        git clone https://github.com/det-lab/band_distribution.git /tmp/band_src && \
         cd /tmp/band_src && git checkout "$GIT_REF"; \
     else \
         echo "Building band_distribution from the local checkout"; \

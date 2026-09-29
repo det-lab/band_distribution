@@ -17,7 +17,7 @@ authors:
     given-names: Damian
     affiliation: Lawrence Berkeley National Laboratory
     orcid: "https://orcid.org/0000-0002-2344-868X"
-repository-code: "https://github.com/pibion/band_distribution"
+repository-code: "https://github.com/det-lab/band_distribution"
 license: BSD-3-Clause
 keywords:
   - dark matter
