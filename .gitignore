@@ -37,3 +37,8 @@ bin/
 # Slurm output and normgrid run artifacts (slurm/normgrid.sbatch writes these)
 logs/
 results/
+
+# Generated from fpm.toml's version field by scripts/generate_version_include.py;
+# run that script before building (every Dockerfile does) -- never commit the
+# output, or it can silently go stale when fpm.toml's version is bumped.
+src/version.f90.inc

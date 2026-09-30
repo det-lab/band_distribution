@@ -64,6 +64,7 @@ COPY src /tmp/band_src/src/
 COPY test /tmp/band_src/test
 COPY fpm.toml /tmp/band_src/
 COPY python /tmp/band_src/python/
+COPY scripts /tmp/band_src/scripts/
 
 RUN if [ -n "$GIT_REF" ]; then \
         echo "Building band_distribution @ $GIT_REF (overriding local checkout)" && \
@@ -74,12 +75,17 @@ RUN if [ -n "$GIT_REF" ]; then \
         echo "Building band_distribution from the local checkout"; \
     fi
 
-RUN mkdir -p /app/src /app/test /app/python \
+RUN mkdir -p /app/src /app/test /app/python /app/scripts \
     && cp -r /tmp/band_src/src/. /app/src/ \
     && cp -r /tmp/band_src/test/. /app/test/ \
     && cp -r /tmp/band_src/python/. /app/python/ \
+    && cp -r /tmp/band_src/scripts/. /app/scripts/ \
     && cp /tmp/band_src/fpm.toml /app/ \
     && rm -rf /tmp/band_src
+
+# version.f90.inc (PpqFort_version(); not committed, see the script) must
+# exist before fpm build/test -- it is a plain `include` in src/PpqFort_m.f90
+RUN python scripts/generate_version_include.py
 
 # Link the LLVM OpenMP runtime into everything fpm builds here (including
 # interactive fpm invocations inside the container).  The flang-compiled

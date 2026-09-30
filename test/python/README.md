@@ -20,6 +20,9 @@ build `lib/libband_distribution.so` first.
 | `test_region_integral.py` | The region-normalization integral (`ppqn_region`/`ppqg_region`) against nested `scipy.integrate.quad`, timing, the non-convergence safety net, and the fast error-out on invalid parameters (p10 < p0 etc.). |
 | `test_normgrid.py` | The precomputed-table pipeline (`python/normgrid.py`): interpolant exactness, no-extrapolation, crash-tolerant worker, HDF5 round trip. No Fortran needed. |
 | `test_normplan.py` | The node-count planner (`python/normplan.py`): study layout, the coefficient-tail criterion on functions of known smoothness, the study → analyze path with analytic stand-in evaluators, and that a rough axis stops the plan.  `test/slurm/test_build_table.sh` runs `slurm/build_table.sh` end to end against a mock `sbatch` (needs h5py). |
+| `test_normtables.py` | Published tables fetched by name (`python/normtables.py`): register/fetch round trip, hash verification, cache reuse, a bad-hash cached file is not trusted. Needs `pooch`. |
+| `test_ppq_pdf_tables.py` | `PpqPDF`'s MCMC setup checks against tables: `prior_bounds` (shared and band-specific keys), `check_points`, `table_bounds`, and an unregistered table name. |
+| `test_version.py` | The compiled library's reported version (`PpqFort_version()`) matches `fpm.toml`'s `version` field — the regression guard for `scripts/generate_version_include.py` (see the main README's fpm section). |
 
 The two simulator tests are the strongest statement: the event generator
 (`generate_events.py`) knows nothing about the PDF's integrals — it draws

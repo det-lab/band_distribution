@@ -50,6 +50,7 @@ COPY --chown=${NB_UID}:${NB_GID} src/ /tmp/band_src/src/
 COPY --chown=${NB_UID}:${NB_GID} test/ /tmp/band_src/test/
 COPY --chown=${NB_UID}:${NB_GID} fpm.toml /tmp/band_src/
 COPY --chown=${NB_UID}:${NB_GID} python/ /tmp/band_src/python/
+COPY --chown=${NB_UID}:${NB_GID} scripts/ /tmp/band_src/scripts/
 
 RUN if [ -n "$GIT_REF" ]; then \
         echo "Building band_distribution @ $GIT_REF (overriding local checkout)" && \
@@ -60,10 +61,11 @@ RUN if [ -n "$GIT_REF" ]; then \
         echo "Building band_distribution from the local checkout"; \
     fi
 
-RUN mkdir -p src test python \
+RUN mkdir -p src test python scripts \
     && cp -r /tmp/band_src/src/. src/ \
     && cp -r /tmp/band_src/test/. test/ \
     && cp -r /tmp/band_src/python/. python/ \
+    && cp -r /tmp/band_src/scripts/. scripts/ \
     && cp /tmp/band_src/fpm.toml . \
     && rm -rf /tmp/band_src
 
@@ -75,6 +77,16 @@ ENV LD_LIBRARY_PATH=${CONDA_DIR}/envs/band/lib:/home/jovyan/lib
 # -liomp5 the Python ctypes load fails on __kmpc_* symbols
 ENV FPM_LDFLAGS="-liomp5"
 
+# version.f90.inc (PpqFort_version(); not committed, see the script) must
+# exist before fpm build/test -- it is a plain `include` in src/PpqFort_m.f90
+RUN mamba run -n band python scripts/generate_version_include.py
+
 # Now compile the fortran code with the band env's ifx and fpm
 RUN mamba run -n band fpm test --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release \
     && mamba run -n band fpm install --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release --prefix .
+
+# Published normalization tables (python/table_registry.json), fetched and
+# hash-checked at build time -- HPC compute nodes often have no internet.
+# python/normtables.py (and so PpqPDF(ppqn_table=NAME)) finds them here.
+ENV BAND_TABLES_DIR=/home/${NB_USER}/tables
+RUN mkdir -p "${BAND_TABLES_DIR}" && mamba run -n band python python/normtables.py fetch --all

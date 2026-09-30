@@ -9,6 +9,14 @@ Citation metadata for the code is in `CITATION.cff` (GitHub's "Cite this reposit
 
 This project uses the Fortran Package Manager (fpm).  You'll need to install that to build this project; please see https://fpm.fortran-lang.org/install/index.html#install for instructions on installing fpm on your system.  Currently (Nov 2025), building from source will install version 0.14 while installing the package via e.g. `conda` will install version 0.12.
 
+Before `fpm build`/`fpm test`, generate `src/version.f90.inc` (not committed — `src/PpqFort_m.f90` `include`s it, so the build fails loudly if you skip this rather than silently reporting a stale version):
+
+```
+python scripts/generate_version_include.py
+```
+
+Every Dockerfile in this repo runs this automatically; it's only a manual step for a local, non-container build. `PpqFort_version()` then reports exactly `fpm.toml`'s `version` field — there is no second copy to keep in sync by hand.
+
 The code parallelizes its integration loops with `do concurrent` using locality specifiers, including the Fortran 2023 `reduce` clause, so you need a recent compiler.  The versions below have been verified via the docker containers in this repository:
 
 |Vendor| Version(s)      |  Build/Test Command                                                                                                                        |
