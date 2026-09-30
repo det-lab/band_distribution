@@ -1,13 +1,25 @@
-# Pinned to linux/amd64: this base image is multi-arch, but the
-# environment.yaml installed below pulls the x86_64-only ifx_linux-64
-# conda package.  On an arm64 host (e.g. Apple Silicon) an unpinned
-# `docker build` would pull the arm64 base and then fail to resolve that
-# package.
-FROM --platform=linux/amd64 quay.io/jupyter/base-notebook
+# Use gmao/llvm-flang as base image, same as Dockerfile_llvm, and layer a
+# plain Jupyter install on top rather than basing on quay.io/jupyter/base-
+# notebook (as this file did until 2026-09-30) and bolting on a compiler:
+# this used to build with ifx, and via environment.yaml's now-removed
+# unconditional ifx_linux-64 dependency, so did the llvm image -- silently
+# shipping Intel's ifx binaries in an image meant specifically to avoid
+# that.  Basing on gmao/llvm-flang reuses Dockerfile_llvm's already-proven
+# flang toolchain instead of introducing a second, untested way to get
+# flang onto a generic Ubuntu image.  The cost: none of docker-stacks'
+# machinery (tini, NB_UID matching, start-notebook hooks) comes for free
+# here, so this file creates a plain `jovyan` user and launches `jupyter
+# lab` directly -- simpler, and consistent with every other Dockerfile in
+# this repo, none of which bother with a non-root user either beyond this
+# one.  The documented `docker run ... -v host/path:/home/jovyan/work/...`
+# mount point (see the README) is preserved.
+#
+# Pinned to linux/amd64: gmao/llvm-flang currently has no arm64 variant
+# (see Dockerfile_llvm).
+FROM --platform=linux/amd64 gmao/llvm-flang
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
-USER root
 
 # Version of the repository to build: leave unset (default) to build from
 # this local checkout, including any uncommitted changes; set to a tag or
@@ -15,42 +27,71 @@ USER root
 # that exact revision from GitHub, ignoring the local checkout.
 ARG GIT_REF=""
 
-# fix-permissions at the end: under Rosetta emulation (Apple Silicon) the
-# emulator writes $HOME/.cache/rosetta during this root-stage layer, and the
-# image sets HOME=/home/jovyan globally, leaving .cache root-owned and
-# breaking the later mamba install running as $NB_UID
+# Install necessary packages (same as Dockerfile_llvm, minus nano which
+# is redundant with vim; sudo is for the jovyan user created below)
 RUN apt-get update && apt-get install -y \
+    wget \
+    bzip2 \
+    ca-certificates \
+    curl \
     git \
-    gcc \
     vim \
-    libtree \
+    sudo \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* \
-    && fix-permissions "/home/${NB_USER}"
+    && rm -rf /var/lib/apt/lists/*
 
-# Switch back to jovyan to avoid accidental container runs as root
-USER $NB_UID
+# A non-root user to run Jupyter as, with a passwordless sudo (so it can
+# still install things interactively) -- not docker-stacks' NB_UID/NB_GID
+# scheme, just a plain user with the same name and home directory so the
+# README's documented mount point (/home/jovyan/work/...) still works.
+RUN useradd --create-home --shell /bin/bash jovyan \
+    && echo "jovyan ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/jovyan
 
-# Create the band conda environment from the same environment.yaml used by
-# the other containers (ifx compiler, fpm, and all python packages), and
-# register it as a notebook kernel so notebooks can select "Python (band)".
-# Recipe: https://jupyter-docker-stacks.readthedocs.io/en/latest/using/recipes.html#add-a-custom-conda-environment-and-jupyter-kernel
-COPY --chown=${NB_UID}:${NB_GID} environment.yaml /tmp/
-RUN mamba env create -f /tmp/environment.yaml && \
-    mamba run -n band python -m ipykernel install --user --name band --display-name "Python (band)" && \
-    mamba clean --all -f -y && \
-    fix-permissions "${CONDA_DIR}" && \
-    fix-permissions "/home/${NB_USER}"
+WORKDIR /home/jovyan
 
-WORKDIR /home/${NB_USER}
+# Install Anaconda (same as Dockerfile_llvm)
+RUN wget https://repo.anaconda.com/archive/Anaconda3-2024.10-1-Linux-x86_64.sh -O /tmp/anaconda.sh \
+    && bash /tmp/anaconda.sh -b -p /opt/anaconda \
+    && rm /tmp/anaconda.sh \
+    && chown -R jovyan:jovyan /opt/anaconda
+
+# Add Anaconda to PATH
+ENV PATH="/opt/anaconda/bin:${PATH}"
+
+# Initialize conda for bash shell (jovyan, not root: this image runs as
+# jovyan from here on)
+USER jovyan
+RUN echo ". /opt/anaconda/etc/profile.d/conda.sh" >> ~/.bash_profile
+RUN echo ". /opt/anaconda/etc/profile.d/conda.sh" >> ~/.bashrc
+
+# Copy environment.yaml file
+COPY --chown=jovyan:jovyan environment.yaml .
+
+# Create the band conda environment (fpm and the python packages -- no
+# compiler; system flang from the base image is used instead), add
+# JupyterLab on top (not in environment.yaml: the other four containers
+# don't need it), and register the kernel so notebooks can select
+# "Python (band)".
+RUN conda env create -f environment.yaml \
+    && conda install -n band -c conda-forge jupyterlab --yes \
+    && conda run -n band python -m ipykernel install --user --name band --display-name "Python (band)"
+RUN echo "conda activate band" >> ~/.bash_profile
+RUN echo "conda activate band" >> ~/.bashrc
+
+# Source - https://stackoverflow.com/a/39777387
+# Posted by Ahmad Abdelghany, modified by community. See post 'Timeline' for change history
+# Retrieved 2025-11-09, License - CC BY-SA 4.0
+# this command, together with putting conda activation in .bash_profile, means we have
+# enabled the conda environment for every command
+SHELL ["/bin/bash", "--login", "-c"]
 
 # Stage the source: defaults to this local checkout; if GIT_REF is set,
 # the RUN step below discards this and clones that revision instead.
-COPY --chown=${NB_UID}:${NB_GID} src/ /tmp/band_src/src/
-COPY --chown=${NB_UID}:${NB_GID} test/ /tmp/band_src/test/
-COPY --chown=${NB_UID}:${NB_GID} fpm.toml /tmp/band_src/
-COPY --chown=${NB_UID}:${NB_GID} python/ /tmp/band_src/python/
-COPY --chown=${NB_UID}:${NB_GID} scripts/ /tmp/band_src/scripts/
+COPY --chown=jovyan:jovyan src /tmp/band_src/src/
+COPY --chown=jovyan:jovyan test /tmp/band_src/test
+COPY --chown=jovyan:jovyan fpm.toml /tmp/band_src/
+COPY --chown=jovyan:jovyan python /tmp/band_src/python/
+COPY --chown=jovyan:jovyan scripts /tmp/band_src/scripts/
 
 RUN if [ -n "$GIT_REF" ]; then \
         echo "Building band_distribution @ $GIT_REF (overriding local checkout)" && \
@@ -67,26 +108,33 @@ RUN mkdir -p src test python scripts \
     && cp -r /tmp/band_src/python/. python/ \
     && cp -r /tmp/band_src/scripts/. scripts/ \
     && cp /tmp/band_src/fpm.toml . \
-    && rm -rf /tmp/band_src
-
-# Intel runtime libs (libimf.so, libiomp5.so, ...) live in the band env's
-# lib dir; needed when python ctypes loads libband_distribution.so
-ENV LD_LIBRARY_PATH=${CONDA_DIR}/envs/band/lib:/home/jovyan/lib
-
-# Link the Intel OpenMP runtime into everything fpm builds here; without
-# -liomp5 the Python ctypes load fails on __kmpc_* symbols
-ENV FPM_LDFLAGS="-liomp5"
+    && sudo rm -rf /tmp/band_src
 
 # version.f90.inc (PpqFort_version(); not committed, see the script) must
 # exist before fpm build/test -- it is a plain `include` in src/PpqFort_m.f90
-RUN mamba run -n band python scripts/generate_version_include.py
+RUN python scripts/generate_version_include.py
 
-# Now compile the fortran code with the band env's ifx and fpm
-RUN mamba run -n band fpm test --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release \
-    && mamba run -n band fpm install --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release --prefix .
+# Link the LLVM OpenMP runtime into everything fpm builds here (including
+# interactive fpm invocations inside the container).  The flang-compiled
+# shared library references __kmpc_* symbols, and without -fopenmp at link
+# time the Python ctypes load of libband_distribution.so fails.
+ENV FPM_LDFLAGS="-fopenmp"
+
+# Now compile the fortran code.
+# The compiler is invoked as `flang`: the flang-new name was dropped in
+# LLVM 20.  -fdo-concurrent-to-openmp=host parallelizes the do concurrent
+# loops via the OpenMP runtime; without it they compile to serial loops.
+RUN LD_LIBRARY_PATH="" fpm test --compiler flang --profile release --flag "-O3 -fopenmp -fdo-concurrent-to-openmp=host" \
+    && LD_LIBRARY_PATH="" fpm install --prefix=. --compiler flang --profile release --flag "-O3 -fopenmp -fdo-concurrent-to-openmp=host"
+
+# Needed to find the appropriate .so files from within python
+ENV LD_LIBRARY_PATH=/home/jovyan/lib:$LD_LIBRARY_PATH
 
 # Published normalization tables (python/table_registry.json), fetched and
 # hash-checked at build time -- HPC compute nodes often have no internet.
 # python/normtables.py (and so PpqPDF(ppqn_table=NAME)) finds them here.
-ENV BAND_TABLES_DIR=/home/${NB_USER}/tables
-RUN mkdir -p "${BAND_TABLES_DIR}" && mamba run -n band python python/normtables.py fetch --all
+ENV BAND_TABLES_DIR=/home/jovyan/tables
+RUN mkdir -p "${BAND_TABLES_DIR}" && python python/normtables.py fetch --all
+
+EXPOSE 8888
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser"]

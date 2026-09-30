@@ -50,20 +50,19 @@ RUN echo ". /opt/anaconda/etc/profile.d/conda.sh" >> ~/.bashrc
 # Copy environment.yaml file
 COPY environment.yaml .
 
-# Create conda environment from the yaml file
-# this installs fpm and intel compiler (ifx)
+# Create conda environment from the yaml file (fpm and the python packages;
+# no compiler -- environment.yaml is shared by every container, including
+# the llvm/jupyter ones, which must never pull Intel's ifx), then add ifx on
+# top of it, same as Dockerfile_intel.
 #
-# Ordering note: this must come before the TAU build below because TAU's
-# configure step needs ifx from this environment.  It would be tempting to
-# build TAU first (it takes by far the longest, and editing
-# environment.yaml invalidates the TAU layer), but that would require
-# installing ifx separately and adding the python packages to the
-# environment afterwards with `conda env update` -- and a two-stage
-# install can resolve to a different environment (e.g. a different python
-# version) than the single-shot create used by the other containers.
-# Creating the full environment first guarantees this container's python
-# environment is identical to theirs.
+# Ordering note: both of these must come before the TAU build below because
+# TAU's configure step needs ifx from this environment.  It would be
+# tempting to build TAU first (it takes by far the longest, and editing
+# either of these commands invalidates the TAU layer), but the environment
+# must be fully in place -- python packages and ifx alike -- before TAU's
+# configure runs.
 RUN conda env create -f environment.yaml
+RUN conda install -n band -c https://software.repos.intel.com/python/conda ifx_linux-64 --yes
 RUN echo "conda activate band" >> ~/.bash_profile
 RUN echo "conda activate band" >> ~/.bashrc
 

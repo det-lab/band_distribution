@@ -245,7 +245,7 @@ There are multiple Dockerfiles, each building the code with a compiler from a di
 |------|---------------------|-------|
 |GNU   | Dockerfile_gfortran | Slow: gfortran runs the band integrals serially, ~25x slower than ifx/flang (see the compiler notes above) |
 |Intel | Dockerfile_intel    | Recommended for work that needs speed |
-|LLVM  | Dockerfile_llvm     | Same performance as the Intel build |
+|LLVM  | Dockerfile_llvm     | Same performance as the Intel build; preferred for any image meant to be published, since `environment.yaml` never installs Intel's ifx unless a Dockerfile explicitly adds it (`Dockerfile_intel`/`_tau_intel` do, via `conda install -n band ifx_linux-64` after the shared environment is created) |
 
 Choose which compiler you want, determine the name of the dockerfile, and then issue the following command:
 
@@ -287,6 +287,8 @@ docker run -it --rm -p 8888:8888 -v /mnt/c/Users/canto/Repositories/nrFanoII:/ho
 ```
 
 In notebooks, select the **Python (band)** kernel — it runs in the `band` conda environment (built from `environment.yaml`, the same environment used by the other containers), which has the compiled library's runtime dependencies and all the python packages.
+
+This image compiles with flang (LLVM), like `Dockerfile_llvm`, not ifx: it is meant to be publishable, and `environment.yaml` never installs Intel's ifx unless a Dockerfile explicitly adds it on top (see the compiler table above) — avoiding the Intel-redistribution question entirely, the same reasoning that picked LLVM over Intel for the HPC container.
 
 # Use the docker container for local development
 For local development, you most likely want the files available to you in a way that persists once you close the container.  In this case you need to supply arguments to `docker run` that mount the top-level directory:
