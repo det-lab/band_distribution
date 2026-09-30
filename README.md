@@ -143,7 +143,7 @@ Even at ~2 s, computing the normalization integral at every MCMC step is out of 
 A few design points worth knowing:
 
 * **Axes.** `k`, `F0` (used *linearly* — the integral is smooth in F0 but not in log F0, so 3 nodes give ~3e-9 where log F0 needs 9+), `V`, `p0`, `dp = p10 - p0`, `q0`, `dq = q10 - q0`.  The resolution model `sigp² = p0² + (p10² - p0²)(Ep/c)²` is only defined for `p10 >= p0` (likewise `q10 >= q0`), so a plain `(p0, p10)` or `(q0, q10)` box would contain unphysical corners (the `q0` and `q10` ranges overlap); `dp >= 0` and `dq >= 0` keep the box rectangular.  Query the table with the physical `p10`/`q10`; it converts.  `PpqN_region`/`PpqG_region` now error out in ~0.3 s on such inputs (and on `F0, eps, p0, q0, k, Z <= 0`, an empty region, or NaN) instead of grinding for minutes.
-* **Interpolant.** Tensor-product Chebyshev series through Chebyshev–Lobatto nodes, built and evaluated with `numpy.polynomial.chebyshev` (`chebfit`/`chebval`; exact at the nodes, ~40 µs per lookup natively — about 0.1% of a 20,000-event likelihood evaluation).  It **never extrapolates** — a query outside the table's box raises `OutOfBoxError`, so keep the MCMC prior inside the box (default box: `k` 0.13–0.22, `F0` 1e-5–1 (ER: 0.1–0.35, bracketing the effective low-field electron-recoil Fano factor of ~0.2–0.3), `V` 2.7–3.3, `p0` 0.0128–0.1156 and `q0` 0.0474–0.4 (the ±4σ range of Gaussian priors centred on 0.0642 and 0.2372 with a 20% 1σ width, `q0` capped at the maximum `q10`), `dp = p10-p0` 0.18–0.59 and `dq = q10-q0` 0–0.353 (from `p10` 0.3–0.6, `q10` 0.2–0.4); edit `DEFAULT_BOX` / `BAND_BOX_OVERRIDES` for a different one).
+* **Interpolant.** Tensor-product Chebyshev series through Chebyshev–Lobatto nodes, built and evaluated with `numpy.polynomial.chebyshev` (`chebfit`/`chebval`; exact at the nodes, ~40 µs per lookup natively — about 0.1% of a 20,000-event likelihood evaluation).  It **never extrapolates** — a query outside the table's box raises `OutOfBoxError`, so keep the MCMC prior inside the box (see [Fits and MCMC with the tables](#fits-and-mcmc-with-the-tables); default box: `k` 0.13–0.22, `F0` 1e-5–1 (ER: 0.1–0.35, bracketing the effective low-field electron-recoil Fano factor of ~0.2–0.3), `V` 2.7–3.3, `p0` 0.0128–0.1156 and `q0` 0.0474–0.4 (the ±4σ range of Gaussian priors centred on 0.0642 and 0.2372 with a 20% 1σ width, `q0` capped at the maximum `q10`), `dp = p10-p0` 0.18–0.59 and `dq = q10-q0` 0–0.353 (from `p10` 0.3–0.6, `q10` 0.2–0.4); for a different one, rebuild with `BOX=`, e.g. `BOX="V=2.5:4" sbatch slurm/build_table.job ...`, or change the defaults `DEFAULT_BOX` / `BAND_BOX_OVERRIDES`).
 * **Node counts** (`RECOMMENDED_NODES`, from per-axis studies against directly computed held-out points; region-dependent): NR `k=8 F0=3 V=4 p0=4 dp=3 q0=16 dq=4` (73,728 points); ER `F0=3 V=9 p0=4 dp=6 q0=11 dq=9` (64,152 points).  The counts depend on the region: these are for the analysis ROI Ep 2.5–350 / Eq 0.75–200 (the earlier 2–200 / 4–100 region needed far fewer, e.g. 5 nodes in `q0`).  `q0` is the hard axis for NR — its error falls only ~4× per two nodes — so check it with `validate`.  At roughly 1–3 s per point on one core that is tens of core-hours.  These target ~1e-7 worst-case error per axis, i.e. ~0.02 in the log-likelihood at 20,000 events (the error is `N_events × δN/N`).  Always confirm with `validate` — the per-axis studies cannot see cross terms.
 
 ```
@@ -180,6 +180,55 @@ fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
              ppqn_table="norm_NR.h5", ppqg_table="norm_ER.h5")   # region must match the tables
 # fit.ppqn_integral(...) / fit.ppqg_integral(...) now interpolate instead of integrating
 ```
+
+**Published tables** are listed in `python/table_registry.json` and can be passed by name instead of a path: `python/normtables.py` downloads them from [Zenodo](https://doi.org/10.5281/zenodo.23048215) on first use, checks their SHA-256, and caches them (`$BAND_TABLES_DIR`, else `~/.cache/band_distribution`; the containers ship with every registered table in `/app/tables`).  `python python/normtables.py list` shows what is available.
+
+# Fits and MCMC with the tables
+
+A table covers a fixed box of parameters and never extrapolates, so the rule for a fit or an MCMC is the same: **keep every parameter inside the tables' box, with `p10 >= p0` and `q10 >= q0`** (the PDF is undefined otherwise).  The library checks this and says what to change; the fit or MCMC code has to enforce it.
+
+* `PpqPDF(..., prior_bounds=BOUNDS)` checks hard bounds against every table given, at construction.  If they reach outside a table it raises `PriorNotCoveredError`, listing each short axis and the `BOX=` rebuild command that would cover them.
+* `pdf.table_bounds()` gives, per band, the widest bounds each table covers: a ready-made set of hard bounds.  Take bounds from it, or round inward: the box edges are not round numbers (`p0` starts at 0.0128438), and bounds rounded outward fail the check.
+* `pdf.check_points(points)` checks a set of points, e.g. an MCMC's starting walkers.
+* At run time, a query outside a table raises `OutOfBoxError` naming the axis, the value, the box and the table file.  After the setup checks pass, that means a bug or a NaN.
+
+Bounds are physical parameters, `{name: (lo, hi)}`.  Parameters the two bands share go at the top level; each band's own (NR's `k`, and the Fano factor `F0`, which differs between the bands) go under `"NR"` and `"ER"`.  `Z` and `eps` are fixed inside a table; pass them as their fixed values or leave them out.
+
+## MCMC
+
+```python
+BOUNDS = {"V": (2.7, 3.3), "p0": (0.0129, 0.1155), "p10": (0.3, 0.6),
+          "q0": (0.0475, 0.4), "q10": (0.2, 0.4),
+          "NR": {"k": (0.13, 0.22), "F0": (1e-5, 1.0)},
+          "ER": {"F0": (0.1, 0.35)}}
+
+pdf = PpqPDF(2.5, 350, 0.75, 200, ep_data, eq_data,
+             ppqn_table="NR_ep2.5-350_eq0.75-200", ppqg_table="ER_ep2.5-350_eq0.75-200",
+             prior_bounds=BOUNDS)                  # 1. fails now, not hours into the run
+
+def log_prior(theta):                             # 2. -inf outside the hard bounds and the ordering
+    p = unpack(theta)
+    if not within(p, BOUNDS) or p["p10"] < p["p0"] or p["q10"] < p["q0"]:
+        return -np.inf
+    return soft_terms(p)                          # e.g. Gaussians on p0, q0 -- truncated by BOUNDS
+
+def log_prob(theta):                              # 3. the prior first: the table never sees
+    lp = log_prior(theta)                         #    a point outside it
+    if not np.isfinite(lp):
+        return -np.inf
+    return lp + log_likelihood(theta, pdf)
+
+pdf.check_points(as_params(start))               # 4. starting walkers inside, before sampling
+                                                  #    ({param: array}, laid out like BOUNDS)
+```
+
+A Gaussian prior (on `p0` or `q0`, say) must be truncated by the hard bounds: `prior_bounds` rejects a parameter without finite bounds, since no table can cover it.  Walkers started in a small ball around a best fit can still land outside near an edge, which is what step 4 catches.
+
+## Fits (maximum likelihood / MAP)
+
+* Give the optimizer bounds inside the tables (e.g. `bounds=` for `scipy.optimize.minimize` with L-BFGS-B, Powell or trust-constr), and check them once with `prior_bounds` or `table_bounds()`.
+* Box bounds cannot express `p10 >= p0`.  Either fit `dp = p10 - p0` and `dq = q10 - q0` directly, bounded by the tables' own `dp`/`dq` axes (`pdf.ppqn_table.box["dp"]`, 0.18–0.59 by default; `dq` 0–0.353), and convert back when calling the PDF, or add the inequalities as constraints (trust-constr, SLSQP).
+* A fit that ends on a bound is being limited by the box, not the data: widen it with `BOX=` and rebuild the tables.
 
 # Build the singularity/apptainer container for HPC submissions
 There are multiple Dockerfiles, each building the code with a compiler from a different vendor (GNU, Intel, and LLVM).  
