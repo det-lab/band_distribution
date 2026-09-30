@@ -28,13 +28,17 @@ jobs:
         include:
           # --- LLVM flang coverage ---
 
-          - os: macos-14
-            compiler: flang
-            version: 21
+          # macos-14 and macos-15-intel are deliberately NOT covered here:
+          # Homebrew ships no llvm/flang bottle for either (macos-14: "Homebrew
+          # no longer builds bottles for this configuration" -- it's aged out
+          # of support; macos-15-intel: flang is a Tier 3 Homebrew formula and
+          # Intel bottles for it are unreliable), so `brew install flang`
+          # compiles LLVM + flang from source on both, ~4 hours, every run --
+          # not a flake, reproduced and timed via the GitHub API. gfortran
+          # still covers both above (it has stable bottles everywhere). This
+          # macos-15 (Apple Silicon) entry already gives real flang-on-macOS
+          # signal, with a working bottle, in a couple of minutes.
           - os: macos-15
-            compiler: flang
-            version: 21
-          - os: macos-15-intel
             compiler: flang
             version: 21
 
