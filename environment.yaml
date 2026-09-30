@@ -1,6 +1,5 @@
 name: band
 channels:
-  - https://software.repos.intel.com/python/conda
   - conda-forge
   - defaults
 dependencies:
@@ -8,7 +7,13 @@ dependencies:
   # for numpy<2 (see below), and the version the chi-square validation
   # of the PDFs was run with
   - python=3.12
-  - ifx_linux-64
+  # No compiler here: gfortran/flang come from the Dockerfile's base image
+  # (apt, or gmao/llvm-flang), and ifx is added on top of this env by
+  # Dockerfile_intel/_tau_intel specifically (`mamba install -n band
+  # -c https://software.repos.intel.com/python/conda ifx_linux-64`) -- NOT
+  # unconditionally here, so the llvm and jupyter images never pull Intel's
+  # ifx binaries at all (they used to, via this file, even though they
+  # never used it: environment.yaml is shared by every container).
   - mpi4py
   - fpm
   - ford
