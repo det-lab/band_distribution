@@ -2,7 +2,7 @@ import numpy as np
 import scipy.integrate as integrate
 from scipy.optimize import curve_fit
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 #the ionization yield: the Lindhard model.
 #Y(Er) = k*g(eps_L) / (1 + k*g(eps_L)), with
@@ -15,13 +15,16 @@ def Y(Er,
     g = 3.0*eps_L**0.15 + 0.7*eps_L**0.29 + eps_L
     return k*g / (1.0 + k*g)
 
-#average numbers of e/h pairs (nuclear recoils; electron recoils use Y=1
-#directly rather than calling this -- see PpqFullG/PpqExp's is_gamma branch)
+#average numbers of e/h pairs, for either band.  is_gamma selects the
+#electron-recoil yield (Y = 1) instead of the Lindhard NR yield
+#Y(Er,k=k,Z=Z); k, Z are unused (pass any value) when is_gamma=True.
 def Nbar(Er,
 	  *,
 	  k, Z,
-	  eps):
-    return Y(Er,k=k,Z=Z)*Er/eps
+	  eps,
+	  is_gamma):
+    yield_val = 1.0 if is_gamma else Y(Er,k=k,Z=Z)
+    return yield_val*Er/eps
 
 #phonon and ionization resolutions
 def sigp(Ep,
@@ -83,7 +86,7 @@ def bN(Er,Ep,Eq,
 	      p0, p10,
 	      q0, q10,
 	      is_gamma):
-    Nbar_val = np.abs(Er)/eps if is_gamma else Y(Er,k=k,Z=Z)*Er/eps
+    Nbar_val = Nbar(Er,k=k,Z=Z,eps=eps,is_gamma=is_gamma)
     t1 = 1/(2*Nbar_val*F0)
     t2 = eps**2/(2*sigq(Eq,q0=q0,q10=q10)**2)
     t3 = V**2/(2*(sigp(Ep,eps=eps,V=V,p0=p0,p10=p10)*1e3)**2)
@@ -98,7 +101,7 @@ def cN(Er,Ep,Eq,
 	      p0, p10,
 	      q0, q10,
 	      is_gamma):
-    Nbar_val = np.abs(Er)/eps if is_gamma else Y(Er,k=k,Z=Z)*Er/eps
+    Nbar_val = Nbar(Er,k=k,Z=Z,eps=eps,is_gamma=is_gamma)
     t1 = -(Ep-Er)**2/(2*sigp(Ep,eps=eps,V=V,p0=p0,p10=p10)**2)
     t2 = -Eq**2/(2*sigq(Eq,q0=q0,q10=q10)**2)
     t3 = -Nbar_val/(2*F0)
@@ -130,7 +133,7 @@ def PpqFullN(Er, Ep, Eq,
              p0, p10,
              q0, q10):
     F_val    = F0
-    Nbar_val = Nbar(Er, k=k, Z=Z, eps=eps)
+    Nbar_val = Nbar(Er, k=k, Z=Z, eps=eps, is_gamma=False)
     if Nbar_val <= 0.0 or F_val <= 0.0:
         return 0.0
     sigma_N    = np.sqrt(Nbar_val * F_val)
@@ -247,7 +250,7 @@ def PpqFullG(Er, Ep, Eq,
              p0, p10,
              q0, q10):
     F_val    = F0
-    Nbar_val = Er / eps          # Y=1 for electron recoils
+    Nbar_val = Nbar(Er, k=0.0, Z=1.0, eps=eps, is_gamma=True)   # k, Z unused: Y=1 for electron recoils
     if Nbar_val <= 0.0 or F_val <= 0.0:
         return 0.0
     sigma_N    = np.sqrt(Nbar_val * F_val)

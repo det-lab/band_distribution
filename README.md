@@ -1,6 +1,10 @@
 This code is useful for dark matter searches where detector output is Ep (total phonon energy) and Eq (total charge energy).  The point of the code is to provide the probability of an (Ep, Eq) pair given a set of detector parameters for both electron recoils (`PpqG`, where the G is for gamma because gammas are the cause of most electron recoils) and neutron recoils (`PpqN`, where the N is for neutron).
 
 
+# Citing
+
+Citation metadata for the code is in `CITATION.cff` (GitHub's "Cite this repository" button); each release is archived on Zenodo.  The precomputed normalization tables are a separate dataset, [doi:10.5281/zenodo.23048215](https://doi.org/10.5281/zenodo.23048215) (all versions; one version per added fit window), which `python/normtables.py` fetches by name.
+
 # Building and testing with the Fortran Package Manager (`fpm`)
 
 This project uses the Fortran Package Manager (fpm).  You'll need to install that to build this project; please see https://fpm.fortran-lang.org/install/index.html#install for instructions on installing fpm on your system.  Currently (Nov 2025), building from source will install version 0.14 while installing the package via e.g. `conda` will install version 0.12.
@@ -101,6 +105,81 @@ docker run --rm -v $(pwd)/figures:/app/figures band_distribution_intel \
 
 * Call the vectorized entry points (`PpqN_vector` / `PpqG_vector`) with all events in one call — the parallelism lives there, and per-event scalar calls pay OpenMP fork/join overhead instead.
 * **Shuffle the event array once at load time if it is ordered.**  The vector loops split the events into one contiguous chunk per thread (static scheduling), and the loop only finishes when the slowest chunk does.  Per-event cost varies several-fold across the (Ep, Eq) plane — deep-tail events short-circuit in ~2 us while on-band events cost ~10-15 us — so an energy-ordered array hands some threads chunks of expensive events while others idle at the barrier.  Shuffling gives every chunk a similar cost mix and measured 8-15% faster than energy-ordered input.  The result is identical either way, and if your events are already in effectively random order this changes nothing.
+
+# Normalizing a likelihood fit to a region: `PpqPDF`
+
+A likelihood fit needs the *un-normalized* PDF at each data point and the PDF's integral over the fit region (to normalize it) — both re-evaluated at every step as the fit/MCMC explores parameter space.  Computing that normalization with `scipy.integrate.quad` is several seconds per call (it evaluates the PDF one point at a time, at the ~3-25 ms/point *scalar* cost — see `python/ppqfort_pdf.py`'s docstring); `python/ppq_pdf.py`'s `PpqPDF` instead uses a doubling-verified nested Gauss-Legendre quadrature evaluated in one batched, thread-parallel call (`PpqN_region`/`PpqG_region` in Fortran — the ridge location/width is already known exactly, same physics as `test/python/band_breakpoints.py`'s ridge/width derivation, so it needs far fewer points than a naive grid for the same accuracy), landing well under a second per call even for a wide region under `ifx`/`flang`.
+
+`PpqPDF` bundles the things that *don't* change across a fit/MCMC run — the region, the observed dataset, and the normalization quadrature's convergence tolerance — at construction, so every subsequent call only needs the physics parameters that the fit is actually varying:
+
+```python
+import sys
+sys.path.insert(0, "python")  # or wherever your checkout's python/ dir lives
+import numpy as np
+from ppq_pdf import PpqPDF
+
+fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+             norm_epsrel=1e-4, norm_epsabs=1e-10)
+# norm_epsrel/norm_epsabs set how tightly two successive doubled
+# quadrature orders must agree before the normalization integral is
+# trusted (see PpqN_region's doc comment in src/PpqFort_m.f90) -- NOT
+# related to len(ep_data).  1e-4/1e-10 agreed with scipy.integrate.quad
+# to ~1e-12 relative across the regions tested in
+# test_region_integral.py, including a 247 keV-wide region.
+
+def loglike(k, Z, F0, eps, V, p0, p10, q0, q10):
+    vals = fit.ppqn_values(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
+    norm = fit.ppqn_integral(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
+    return np.sum(np.log(vals)) - len(fit.ep_data) * np.log(norm)
+    # or fit.ppqn_normalized_values(...) if you want vals/norm directly
+```
+
+Same shape for the ER band (`ppqg_integral`/`ppqg_values`/`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there). Build `fit` once, outside the fit loop; call its methods once per step, inside.
+
+# Precomputed normalization tables for MCMC: `python/normgrid.py`
+
+Even at ~2 s, computing the normalization integral at every MCMC step is out of the question.  But the region is fixed for a whole run and the integral is a very smooth function of the physics parameters the MCMC varies, so `normgrid.py` evaluates it once on a small tensor grid (one independent integral per grid point — a good fit for the OSG) and interpolates it at tens of microseconds per step.  Separate tables for the NR band (`k, F0, V, p0, p10, q0, q10`) and the ER band (same, no `k`); `Z` and `eps` are fixed inside a table and checked on every call.
+
+A few design points worth knowing:
+
+* **Axes.** `k`, `F0` (used *linearly* — the integral is smooth in F0 but not in log F0, so 3 nodes give ~3e-9 where log F0 needs 9+), `V`, `p0`, `dp = p10 - p0`, `q0`, `dq = q10 - q0`.  The resolution model `sigp² = p0² + (p10² - p0²)(Ep/c)²` is only defined for `p10 >= p0` (likewise `q10 >= q0`), so a plain `(p0, p10)` or `(q0, q10)` box would contain unphysical corners (the `q0` and `q10` ranges overlap); `dp >= 0` and `dq >= 0` keep the box rectangular.  Query the table with the physical `p10`/`q10`; it converts.  `PpqN_region`/`PpqG_region` now error out in ~0.3 s on such inputs (and on `F0, eps, p0, q0, k, Z <= 0`, an empty region, or NaN) instead of grinding for minutes.
+* **Interpolant.** Tensor-product Chebyshev series through Chebyshev–Lobatto nodes, built and evaluated with `numpy.polynomial.chebyshev` (`chebfit`/`chebval`; exact at the nodes, ~40 µs per lookup natively — about 0.1% of a 20,000-event likelihood evaluation).  It **never extrapolates** — a query outside the table's box raises `OutOfBoxError`, so keep the MCMC prior inside the box (default box: `k` 0.13–0.22, `F0` 1e-5–1 (ER: 0.1–0.35, bracketing the effective low-field electron-recoil Fano factor of ~0.2–0.3), `V` 2.7–3.3, `p0` 0.0128–0.1156 and `q0` 0.0474–0.4 (the ±4σ range of Gaussian priors centred on 0.0642 and 0.2372 with a 20% 1σ width, `q0` capped at the maximum `q10`), `dp = p10-p0` 0.18–0.59 and `dq = q10-q0` 0–0.353 (from `p10` 0.3–0.6, `q10` 0.2–0.4); edit `DEFAULT_BOX` / `BAND_BOX_OVERRIDES` for a different one).
+* **Node counts** (`RECOMMENDED_NODES`, from per-axis studies against directly computed held-out points; region-dependent): NR `k=8 F0=3 V=4 p0=4 dp=3 q0=16 dq=4` (73,728 points); ER `F0=3 V=9 p0=4 dp=6 q0=11 dq=9` (64,152 points).  The counts depend on the region: these are for the analysis ROI Ep 2.5–350 / Eq 0.75–200 (the earlier 2–200 / 4–100 region needed far fewer, e.g. 5 nodes in `q0`).  `q0` is the hard axis for NR — its error falls only ~4× per two nodes — so check it with `validate`.  At roughly 1–3 s per point on one core that is tens of core-hours.  These target ~1e-7 worst-case error per axis, i.e. ~0.02 in the log-likelihood at 20,000 events (the error is `N_events × δN/N`).  Always confirm with `validate` — the per-axis studies cannot see cross terms.
+
+```
+# describe the grid (region and epsrel are required; nodes default to RECOMMENDED_NODES
+# and the box to the one above -- a wrong region makes a table that looks fine and isn't)
+python python/normgrid.py make-spec --band NR --region 2 200 4 100 --epsrel 1e-7 --out spec_NR.json
+python python/normgrid.py make-random-spec --band NR --n 200 --region 2 200 4 100 --epsrel 1e-7 --out held_NR.json
+
+# run it: on one machine, or as batch jobs (osg/normgrid.sub + osg/normgrid_job.sh are an HTCondor template)
+python python/normgrid.py chunks spec_NR.json --size 100        # "start stop" ranges, one per job
+python python/normgrid.py run --spec spec_NR.json --start 0 --stop 100 --out res_0.txt
+python python/normgrid.py run --spec held_NR.json --out res_held.txt
+
+# combine into one HDF5 file and check it against the held-out points
+python python/normgrid.py merge --spec spec_NR.json --results 'res_*.txt' --out norm_NR.h5
+python python/normgrid.py validate --table norm_NR.h5 --heldout-spec held_NR.json --results res_held.txt
+```
+
+**On a Slurm cluster** use the **ifx (or flang) container, not gfortran** — gfortran runs the band integrals ~25x slower — via `slurm/normgrid.sbatch`, a job-array template (one single-core task per chunk of grid points; `OMP_NUM_THREADS=1` so an ifx build doesn't oversubscribe cores; a header comment gives the exact `sbatch` and `merge`/`validate` commands, and resubmitting the same array only redoes unfinished chunks).  It runs the container `$BAND_SIF` (default `/scratch/$USER/containers/band.sif`, as pulled by `slurm/pull_container.job`), a `band.sif` built from `Dockerfile_intel` or `Dockerfile_llvm` (see "Build the singularity/apptainer container" below), or set `BAND_NATIVE=1` to use a library you built on the cluster.  `osg/` holds a similar HTCondor template.
+
+**One command for a whole table.**  How many nodes an axis needs depends on the fit region (the same box needed 5 nodes in `q0` for Eq 4–100 and about 16 for Eq 0.75–200), so `slurm/build_table.sh` measures instead of assuming.  For a region it (1) evaluates 33 Chebyshev–Lobatto nodes along each axis at three baseline points (`python/normplan.py points`, about 700 integrals), (2) reads the Chebyshev coefficients of each axis to find the fewest nodes whose truncation error is below `TOL` (`normplan.py analyze`; it stops with an error if an axis is not resolved by 33 nodes, rather than guessing), (3) evaluates the resulting grid and a set of held-out points, and (4) merges and validates, exiting with status 1 if the worst held-out error exceeds `ACCEPT`:
+
+```
+sbatch slurm/build_table.job NR 2.5 350 0.75 200              # -> tables/norm_NR_ep2.5-350_eq0.75-200.h5
+TOL=2.5e-8 sbatch slurm/build_table.job NR 2.5 350 0.75 200   # retry with more nodes; earlier results are reused
+```
+
+Each Slurm stage is `sbatch --wait slurm/normgrid.sbatch ...`, so `slurm/build_table.sh` runs until the whole chain is done; `slurm/build_table.job` runs it as a single-core driver job that waits in the queue like any other (the environment at submission, e.g. `TOL`, is passed on).  Every array is checked with `sacct` when it ends and a failed task stops the chain (`sbatch --wait` exits 0 on Alderaan even when tasks fail).  The container is `BAND_SIF`, by default `/scratch/$USER/containers/band.sif` where `slurm/pull_container.job` puts it.  Options (`TOL`, `EPSREL`, `ACCEPT`, chunk sizes, `ACCOUNT`/`PARTITION`/`TIME`) are documented in the script header.  The one-axis-at-a-time study cannot see cross terms between axes, which is why the held-out check is the gate.  `test/slurm/test_build_table.sh` runs the whole chain locally against a mock `sbatch` and an analytic stand-in for the integrals.
+
+`run` is resumable and crash-tolerant: Fortran `error stop` (e.g. the quadrature not certifying `epsrel=1e-7`) kills the process, so a supervisor records that point as `nan` and restarts past it; re-run failures with a looser tolerance via `run --retry-failed --epsrel 1e-6`.  `merge` refuses to build a table with missing points.  The HDF5 file records the region, fixed parameters, library version and git commit it was built with — rebuild if any of those change.  (`h5py` is in `environment.yaml`.)  Then hand the tables to `PpqPDF`; nothing else in the fit changes:
+
+```python
+fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+             ppqn_table="norm_NR.h5", ppqg_table="norm_ER.h5")   # region must match the tables
+# fit.ppqn_integral(...) / fit.ppqg_integral(...) now interpolate instead of integrating
+```
 
 # Build the singularity/apptainer container for HPC submissions
 There are multiple Dockerfiles, each building the code with a compiler from a different vendor (GNU, Intel, and LLVM).  

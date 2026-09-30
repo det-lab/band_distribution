@@ -5,13 +5,13 @@ import os
 
 repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Path to the directory containing pq_dist_v9.py
+# Path to the directory containing pq_dist_v10.py
 module_dir = os.path.join(repo_root, 'python')
 sys.path.append(module_dir)
 
-# pq_dist_v9 contains the Python implementation with the numerical N integral
+# pq_dist_v10 contains the Python implementation with the numerical N integral
 # (21-point Simpson's rule, sigp/sigq at noiseless energies), matching Fortran PpqN.
-import pq_dist_v9 as ppq
+import pq_dist_v10 as ppq
 
 folderpath = repo_root
 if os.name == 'posix': #Linux/Mac
@@ -51,7 +51,7 @@ api.Nbar.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c
 api.Nbar.restype = ctypes.c_double
 
 result_fort = api.Nbar(ctypes.c_double(Er), ctypes.c_double(k), ctypes.c_double(Z), ctypes.c_double(eps))
-result_py = ppq.Nbar(Er, k=k, Z=Z, eps=eps)
+result_py = ppq.Nbar(Er, k=k, Z=Z, eps=eps, is_gamma=False)
 print('back in python after running function Nbar')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)

@@ -71,6 +71,24 @@ def _load_library():
     ]
     _api.PpqFort_version.restype = None
 
+    _api.PpqN_region.argtypes = [
+        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,  # ep_min, ep_max, eq_min, eq_max
+        ctypes.c_double, ctypes.c_double,                                    # epsrel, epsabs
+        ctypes.c_double, ctypes.c_double, ctypes.c_double,                   # k, Z, F0
+        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,  # eps, V, p0, p10
+        ctypes.c_double, ctypes.c_double,                                    # q0, q10
+    ]
+    _api.PpqN_region.restype = ctypes.c_double
+
+    _api.PpqG_region.argtypes = [
+        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,  # ep_min, ep_max, eq_min, eq_max
+        ctypes.c_double, ctypes.c_double,                                    # epsrel, epsabs
+        ctypes.c_double,                                                     # F0
+        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,  # eps, V, p0, p10
+        ctypes.c_double, ctypes.c_double,                                    # q0, q10
+    ]
+    _api.PpqG_region.restype = ctypes.c_double
+
     return _api
 
 
@@ -124,6 +142,41 @@ def make_ppqg_pdf(*, F0, eps, V, p0, p10, q0, q10, n_workers=None):
         api.PpqG_vector(ep, eq, ep.size, *scalars, out)
 
     return _make_threaded_pdf(_eval_chunk, n_workers)
+
+
+def ppqn_region(ep_min, ep_max, eq_min, eq_max, *,
+                 epsrel, epsabs,
+                 k, Z, F0, eps, V, p0, p10, q0, q10):
+    """
+    Integral of PpqN over [ep_min,ep_max] x [eq_min,eq_max], computed
+    entirely in Fortran (a single call, no per-point ctypes round trips)
+    with a doubling-verified nested Gauss-Legendre quadrature (see
+    PpqFort_s.f90's region_integral_gl) -- the ridge location/width is
+    already known exactly (ridge_eq_and_width), so this needs far fewer
+    points than a naive grid or generic adaptive cubature for the same
+    accuracy, and is much faster than nested scipy.integrate.quad.
+
+    epsrel/epsabs are required (no defaults): they set how tightly two
+    successive doubled quadrature orders must agree before the result is
+    trusted, and directly control the accuracy of a number that feeds a
+    likelihood normalization. The Fortran side error-stops rather than
+    returning an unverified number if that isn't reached by its highest
+    order.
+    """
+    api = _load_library()
+    return api.PpqN_region(ep_min, ep_max, eq_min, eq_max,
+                            epsrel, epsabs,
+                            k, Z, F0, eps, V, p0, p10, q0, q10)
+
+
+def ppqg_region(ep_min, ep_max, eq_min, eq_max, *,
+                 epsrel, epsabs,
+                 F0, eps, V, p0, p10, q0, q10):
+    """Same as ppqn_region but for PpqG (electron-recoil band, Y=1)."""
+    api = _load_library()
+    return api.PpqG_region(ep_min, ep_max, eq_min, eq_max,
+                            epsrel, epsabs,
+                            F0, eps, V, p0, p10, q0, q10)
 
 
 def _make_threaded_pdf(eval_chunk, n_workers):

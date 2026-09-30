@@ -47,6 +47,36 @@ submodule(PpqFort_m) PpqFort_s
       real(c_double) :: k, Zfac, F0, eps, V, p0, p10, q0, q10
   end type detector_params_t
 
+  ! ---------------------------------------------------------------------
+  ! Gauss-Legendre doubling-verified quadrature: PpqN_region / PpqG_region.
+  ! Replaces an earlier fixed-grid trapezoid implementation (superseded
+  ! entirely -- no reason to keep both once this is faster and more
+  ! accurate) and, before that, a Cuba/Cuhre-based implementation
+  ! (generic adaptive cubature) dropped after real testing showed
+  ! Cuhre's own convergence flag is not trustworthy for this integrand at
+  ! loose tolerances (it reported success on the ER-band target region at
+  ! ~180x worse than the requested accuracy).  Unlike Cuhre, we already
+  ! know exactly where the band ridge is (ridge_eq_and_width/
+  ! build_ridge_table) so no generic subdivision is needed to find it;
+  ! what actually made the old fixed grid slow was trapezoid's O(h^2)
+  ! convergence, not "not knowing where to look". Gauss-Legendre converges
+  ! spectrally for the smooth integrand integrate_band is once inside the
+  ! ridge window, so a modest order reaches the same accuracy as the fixed
+  ! grid's ~97,000 points in ~2,500-8,000 -- confirmed empirically in
+  ! Python before writing this (see gl_experiment.py in session history).
+  ! Because we own the quadrature rule completely, convergence is verified
+  ! by computing at order N and 2N and requiring agreement (doubling,
+  ! escalating up to a cap, erroring out rather than guessing if it's
+  ! never reached) instead of trusting an external library's heuristic.
+  !
+  ! Nodes/weights on [-1,1] from numpy.polynomial.legendre.leggauss(N)
+  ! (float64); regenerate with, e.g.:
+  !   python3 -c "import numpy as np; x,w = np.polynomial.legendre.leggauss(32); print(x); print(w)"
+  include "gl_tables.f90.inc"
+
+  ! Table resolution used by build_ridge_table below.
+  integer(c_int), parameter :: region_ridge_n_tab = 4000
+
 contains
 
   ! Zfac is 0 (and unused downstream) when is_gamma is .true.: PpqG passes
@@ -211,6 +241,26 @@ contains
       pars = make_params(k, Z, F0, eps, V, p0, p10, q0, q10, .false.)
       res = PpqCondN(Er, Ep, Eq, pars, .false.) * PErN(Er)
   end procedure PpqFullN
+
+  ! PpqN_region / PpqG_region: integral of PpqN/PpqG over a rectangular
+  ! (Ep,Eq) region, e.g. to normalize a likelihood to its fit region.
+  ! See region_integral_gl for the algorithm.
+  module procedure PpqN_region
+      type(detector_params_t) :: pars
+
+      pars = make_params(k, Z, F0, eps, V, p0, p10, q0, q10, .false.)
+      res = region_integral_gl(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
+                               pars, .false.)
+  end procedure PpqN_region
+
+  module procedure PpqG_region
+      type(detector_params_t) :: pars
+
+      ! k, Z are unused when is_gamma is .true.; placeholders as elsewhere.
+      pars = make_params(0.0d0, 0.0d0, F0, eps, V, p0, p10, q0, q10, .true.)
+      res = region_integral_gl(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
+                               pars, .true.)
+  end procedure PpqG_region
 
   ! ---------------------------------------------------------------------
   ! Private helpers
@@ -729,5 +779,399 @@ contains
           res = res + tmp
       end do
   end function integrate_band
+
+  ! Linear interpolation of ytab(xtab) at x, matching numpy.interp:
+  ! clamps to the table's end values outside its range.  xtab must be
+  ! sorted ascending.
+  pure function interp1d(x, xtab, ytab, n) result(y)
+      real(c_double), intent(in) :: x
+      integer, intent(in) :: n
+      real(c_double), intent(in) :: xtab(n), ytab(n)
+      real(c_double) :: y
+      integer :: lo, hi, mid
+      real(c_double) :: t
+
+      if (x <= xtab(1)) then
+          y = ytab(1)
+      else if (x >= xtab(n)) then
+          y = ytab(n)
+      else
+          ! Binary search for xtab(lo) <= x < xtab(lo+1): xtab is sorted
+          ! (build_ridge_table's geomspace), so O(log n) instead of the
+          ! O(n) linear scan this replaced -- matters now that
+          ! find_window_breakpoints's scan+bisect calls this thousands
+          ! of times per region_integral_gl call.
+          lo = 1
+          hi = n
+          do while (hi - lo > 1)
+              mid = (lo + hi) / 2
+              if (xtab(mid) <= x) then
+                  lo = mid
+              else
+                  hi = mid
+              end if
+          end do
+          t = (x - xtab(lo)) / (xtab(lo + 1) - xtab(lo))
+          y = ytab(lo) + t * (ytab(lo + 1) - ytab(lo))
+      end if
+  end function interp1d
+
+  ! Tabulate the noiseless band ridge Er -> (Ep(Er), Eq(Er)) on a
+  ! log-spaced Er grid from 1e-3 keV to er_hi.  Same physics as
+  ! band_breakpoints.py: Eq = Y(Er)*Er, Ep = Er*(1 + Y(Er)*V/(1000*eps)),
+  ! with Y=1 for the ER band (is_gamma) and the Lindhard yield otherwise.
+  ! Both are monotone increasing in Er, so this table is invertible by
+  ! interpolation (interp1d, via ridge_eq_and_width below).
+  pure subroutine build_ridge_table(pars, is_gamma, er_hi, n_tab, ep_tab, eq_tab)
+      type(detector_params_t), intent(in) :: pars
+      logical, intent(in) :: is_gamma
+      real(c_double), intent(in) :: er_hi
+      integer, intent(in) :: n_tab
+      real(c_double), intent(out) :: ep_tab(n_tab), eq_tab(n_tab)
+      real(c_double), parameter :: er_lo = 1.0d-3
+      real(c_double) :: dlx, er, y_val
+      integer :: i
+
+      dlx = (log(er_hi) - log(er_lo)) / real(n_tab - 1, c_double)
+      do i = 1, n_tab
+          er = exp(log(er_lo) + real(i - 1, c_double) * dlx)
+          if (is_gamma) then
+              y_val = 1.0d0
+          else
+              y_val = lindhard_yield_zfac(er, pars%k, pars%Zfac)
+          end if
+          eq_tab(i) = y_val * er
+          ep_tab(i) = er * (1.0d0 + y_val * pars%V / (1000.0d0 * pars%eps))
+      end do
+  end subroutine build_ridge_table
+
+  ! The band's local ridge Eq value and width in the Eq direction at a
+  ! given Ep, inverting the tabulated ridge by interpolation.  Mirrors
+  ! band_breakpoints.py's eq_ridge()/inner_points_func width derivation
+  ! exactly: width = hypot(sigq(ridge), slope * sigp(ep)), slope by
+  ! central finite difference of the interpolated ridge.
+  pure subroutine ridge_eq_and_width(ep, ep_tab, eq_tab, n_tab, pars, eqr, width)
+      real(c_double), intent(in) :: ep
+      integer, intent(in) :: n_tab
+      real(c_double), intent(in) :: ep_tab(n_tab), eq_tab(n_tab)
+      type(detector_params_t), intent(in) :: pars
+      real(c_double), intent(out) :: eqr, width
+      real(c_double) :: dep, eqr_plus, eqr_minus, slope, sigp_val, sigq_val
+
+      eqr = interp1d(ep, ep_tab, eq_tab, n_tab)
+      dep = max(1.0d-3, 0.01d0 * ep)
+      eqr_plus  = interp1d(ep + dep, ep_tab, eq_tab, n_tab)
+      eqr_minus = interp1d(ep - dep, ep_tab, eq_tab, n_tab)
+      slope = (eqr_plus - eqr_minus) / (2.0d0 * dep)
+      sigp_val = sigp(ep, pars%eps, pars%V, pars%p0, pars%p10)
+      sigq_val = sigq(eqr, pars%q0, pars%q10)
+      width = sqrt(sigq_val**2 + (slope * sigp_val)**2)
+  end subroutine ridge_eq_and_width
+
+  ! One nested Gauss-Legendre pass at order n_ord: outer do concurrent
+  ! over Gauss-Legendre nodes on Ep, inner sequential loop over
+  ! Gauss-Legendre nodes spanning the local ridge-centred Eq window from
+  ! ridge_eq_and_width (nodes/weights mapped from [-1,1] onto each real
+  ! interval). A degenerate window (ridge entirely outside
+  ! [eq_min,eq_max]) simply contributes 0.
+  ! nodes_ep/n_ord_ep and nodes_eq/n_ord_eq are independent parameters,
+  ! but region_integral_gl below always calls this with them equal:
+  ! pairing the inner Eq sweep with a lower order than the outer Ep sweep
+  ! was tried (reasoning the ridge-centred window needs less resolution)
+  ! and measured *slower* overall, since the coarser Eq resolution made
+  ! coarse/fine agreement harder to reach, forcing escalation to a higher
+  ! Ep order than the matched-order scheme needed -- see the
+  ! doubling ladder's pairing below).
+  pure function gl_region_pass(ep_min, ep_max, eq_min, eq_max, ep_tab, eq_tab, n_tab, &
+      pars, is_gamma, n_window_widths, &
+      nodes_ep, weights_ep, n_ord_ep, nodes_eq, weights_eq, n_ord_eq) result(res)
+      real(c_double), intent(in) :: ep_min, ep_max, eq_min, eq_max
+      integer, intent(in) :: n_tab
+      real(c_double), intent(in) :: ep_tab(n_tab), eq_tab(n_tab)
+      type(detector_params_t), intent(in) :: pars
+      logical, intent(in) :: is_gamma
+      real(c_double), intent(in) :: n_window_widths
+      integer, intent(in) :: n_ord_ep, n_ord_eq
+      real(c_double), intent(in) :: nodes_ep(n_ord_ep), weights_ep(n_ord_ep)
+      real(c_double), intent(in) :: nodes_eq(n_ord_eq), weights_eq(n_ord_eq)
+      real(c_double) :: res
+
+      real(c_double) :: ep_half, ep_mid, ep_i, ep_w_i
+      real(c_double) :: eqr, width, eq_lo, eq_hi, eq_half, eq_mid, eq_i, eq_w_i, inner
+      integer :: i, j
+
+      ep_half = 0.5d0 * (ep_max - ep_min)
+      ep_mid  = 0.5d0 * (ep_max + ep_min)
+
+      res = 0.0d0
+      do concurrent (i = 1:n_ord_ep) default(none) reduce(+: res) &
+          shared(nodes_ep, weights_ep, nodes_eq, weights_eq, ep_half, ep_mid, &
+                 eq_min, eq_max, n_window_widths, &
+                 ep_tab, eq_tab, n_tab, pars, is_gamma, n_ord_ep, n_ord_eq) &
+          local(ep_i, ep_w_i, eqr, width, eq_lo, eq_hi, eq_half, eq_mid, j, eq_i, eq_w_i, inner)
+
+          ep_i   = ep_mid + ep_half * nodes_ep(i)
+          ep_w_i = ep_half * weights_ep(i)
+
+          call ridge_eq_and_width(ep_i, ep_tab, eq_tab, n_tab, pars, eqr, width)
+          eq_lo = max(eq_min, eqr - n_window_widths * width)
+          eq_hi = min(eq_max, eqr + n_window_widths * width)
+
+          inner = 0.0d0
+          if (eq_hi > eq_lo) then
+              eq_half = 0.5d0 * (eq_hi - eq_lo)
+              eq_mid  = 0.5d0 * (eq_hi + eq_lo)
+              do j = 1, n_ord_eq
+                  eq_i   = eq_mid + eq_half * nodes_eq(j)
+                  eq_w_i = eq_half * weights_eq(j)
+                  inner  = inner + eq_w_i * integrate_band(ep_i, eq_i, pars, is_gamma)
+              end do
+          end if
+
+          res = res + ep_w_i * inner
+      end do
+  end function gl_region_pass
+
+  ! Whether two successive doubling levels agree tightly enough to trust
+  ! the finer one -- the auditable check that replaces Cuhre's own
+  ! (demonstrably unreliable, at loose tolerances) internal heuristic.
+  pure function gl_converged(a, b, epsrel, epsabs) result(ok)
+      real(c_double), intent(in) :: a, b, epsrel, epsabs
+      logical :: ok
+      ok = abs(b - a) <= max(epsabs, epsrel * abs(b))
+  end function gl_converged
+
+  ! Locate where the ridge-following Eq window's lower edge crosses
+  ! eq_min, or its upper edge crosses eq_max, as Ep sweeps [ep_min,
+  ! ep_max] -- i.e. where the max()/min() clipping in gl_region_pass
+  ! switches on or off.  A single global Gauss-Legendre rule converges
+  ! poorly across that kink (measured: the user's own MCMC target region,
+  ! which clips at low Ep, needed order 256 -- ~17s -- to converge without
+  ! splitting; ~1s once split at the crossing).  This mirrors why
+  ! band_breakpoints.py hands scipy.integrate.quad explicit breakpoints
+  ! for the same shape of problem.  A monotone scan-then-bisect: the
+  ! window's edges are expected to cross each bound at most once over the
+  ! range (they track the monotone ridge), so a modest scan reliably
+  ! brackets each crossing before refining it.
+  pure subroutine find_window_breakpoints(ep_min, ep_max, eq_min, eq_max, &
+      ep_tab, eq_tab, n_tab, pars, n_window_widths, brk, n_brk)
+      real(c_double), intent(in) :: ep_min, ep_max, eq_min, eq_max
+      integer, intent(in) :: n_tab
+      real(c_double), intent(in) :: ep_tab(n_tab), eq_tab(n_tab)
+      type(detector_params_t), intent(in) :: pars
+      real(c_double), intent(in) :: n_window_widths
+      real(c_double), intent(out) :: brk(2)
+      integer, intent(out) :: n_brk
+
+      integer, parameter :: n_scan = 200, n_bisect = 60
+      real(c_double) :: h, ep_a, ep_b, g_a, g_b, ep_m, g_m, eqr, width
+      integer :: i, it
+
+      n_brk = 0
+      h = (ep_max - ep_min) / real(n_scan - 1, c_double)
+
+      ! Lower-edge crossing of eq_min
+      ep_a = ep_min
+      call ridge_eq_and_width(ep_a, ep_tab, eq_tab, n_tab, pars, eqr, width)
+      g_a = (eqr - n_window_widths * width) - eq_min
+      do i = 2, n_scan
+          ep_b = ep_min + real(i - 1, c_double) * h
+          call ridge_eq_and_width(ep_b, ep_tab, eq_tab, n_tab, pars, eqr, width)
+          g_b = (eqr - n_window_widths * width) - eq_min
+          if ((g_a < 0.0d0) .neqv. (g_b < 0.0d0)) then
+              do it = 1, n_bisect
+                  ep_m = 0.5d0 * (ep_a + ep_b)
+                  call ridge_eq_and_width(ep_m, ep_tab, eq_tab, n_tab, pars, eqr, width)
+                  g_m = (eqr - n_window_widths * width) - eq_min
+                  if ((g_m < 0.0d0) .eqv. (g_a < 0.0d0)) then
+                      ep_a = ep_m; g_a = g_m
+                  else
+                      ep_b = ep_m; g_b = g_m
+                  end if
+              end do
+              n_brk = n_brk + 1
+              brk(n_brk) = 0.5d0 * (ep_a + ep_b)
+              exit
+          end if
+          ep_a = ep_b; g_a = g_b
+      end do
+
+      ! Upper-edge crossing of eq_max
+      ep_a = ep_min
+      call ridge_eq_and_width(ep_a, ep_tab, eq_tab, n_tab, pars, eqr, width)
+      g_a = (eqr + n_window_widths * width) - eq_max
+      do i = 2, n_scan
+          ep_b = ep_min + real(i - 1, c_double) * h
+          call ridge_eq_and_width(ep_b, ep_tab, eq_tab, n_tab, pars, eqr, width)
+          g_b = (eqr + n_window_widths * width) - eq_max
+          if ((g_a < 0.0d0) .neqv. (g_b < 0.0d0)) then
+              do it = 1, n_bisect
+                  ep_m = 0.5d0 * (ep_a + ep_b)
+                  call ridge_eq_and_width(ep_m, ep_tab, eq_tab, n_tab, pars, eqr, width)
+                  g_m = (eqr + n_window_widths * width) - eq_max
+                  if ((g_m < 0.0d0) .eqv. (g_a < 0.0d0)) then
+                      ep_a = ep_m; g_a = g_m
+                  else
+                      ep_b = ep_m; g_b = g_m
+                  end if
+              end do
+              n_brk = n_brk + 1
+              brk(n_brk) = 0.5d0 * (ep_a + ep_b)
+              exit
+          end if
+          ep_a = ep_b; g_a = g_b
+      end do
+  end subroutine find_window_breakpoints
+
+  ! Sum of gl_region_pass over a set of adjacent Ep sub-intervals
+  ! (n_seg segments, ep_bounds(1:n_seg+1) the sorted boundaries) -- lets
+  ! region_integral_gl split at the breakpoints found above while reusing
+  ! gl_region_pass unchanged on each piece.
+  pure function gl_multi_segment_pass(ep_bounds, n_seg, eq_min, eq_max, ep_tab, eq_tab, n_tab, &
+      pars, is_gamma, n_window_widths, &
+      nodes_ep, weights_ep, n_ord_ep, nodes_eq, weights_eq, n_ord_eq) result(res)
+      integer, intent(in) :: n_seg
+      real(c_double), intent(in) :: ep_bounds(n_seg + 1)
+      real(c_double), intent(in) :: eq_min, eq_max
+      integer, intent(in) :: n_tab
+      real(c_double), intent(in) :: ep_tab(n_tab), eq_tab(n_tab)
+      type(detector_params_t), intent(in) :: pars
+      logical, intent(in) :: is_gamma
+      real(c_double), intent(in) :: n_window_widths
+      integer, intent(in) :: n_ord_ep, n_ord_eq
+      real(c_double), intent(in) :: nodes_ep(n_ord_ep), weights_ep(n_ord_ep)
+      real(c_double), intent(in) :: nodes_eq(n_ord_eq), weights_eq(n_ord_eq)
+      real(c_double) :: res
+      integer :: s
+
+      res = 0.0d0
+      do s = 1, n_seg
+          res = res + gl_region_pass(ep_bounds(s), ep_bounds(s + 1), eq_min, eq_max, &
+                                      ep_tab, eq_tab, n_tab, pars, is_gamma, n_window_widths, &
+                                      nodes_ep, weights_ep, n_ord_ep, nodes_eq, weights_eq, n_ord_eq)
+      end do
+  end function gl_multi_segment_pass
+
+  ! Reject parameter sets the physics model cannot evaluate, up front and
+  ! loudly.  The resolution model sigp^2 = p0^2 + (p10^2 - p0^2)(Ep/c)^2
+  ! (likewise sigq) goes negative at high energy whenever p10 < p0 (q10 <
+  ! q0), and the resulting NaNs previously sent the integrator into its
+  ! slowest fallback paths -- minutes per call instead of a fast failure --
+  ! which is intolerable inside an MCMC where a bad proposal must just be
+  ! rejected.  All checks are written as .not. (x > ...) so NaN inputs
+  ! fail them too.
+  pure subroutine validate_region_inputs(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
+      pars, is_gamma)
+      real(c_double), intent(in) :: ep_min, ep_max, eq_min, eq_max, epsrel, epsabs
+      type(detector_params_t), intent(in) :: pars
+      logical, intent(in) :: is_gamma
+
+      if (.not. (ep_max > ep_min .and. eq_max > eq_min)) &
+          error stop "PpqN_region/PpqG_region: invalid region: need ep_max > ep_min and eq_max > eq_min"
+      if (.not. (epsrel >= 0.0d0 .and. epsabs >= 0.0d0)) &
+          error stop "PpqN_region/PpqG_region: invalid tolerance: epsrel and epsabs must be >= 0"
+      if (.not. (pars%F0 > 0.0d0)) &
+          error stop "PpqN_region/PpqG_region: invalid parameters: Fano factor F0 must be > 0"
+      if (.not. (pars%eps > 0.0d0)) &
+          error stop "PpqN_region/PpqG_region: invalid parameters: eps must be > 0"
+      if (.not. (1.0d0 + pars%V / (pars%eps * 1.0d3) > 0.0d0)) &
+          error stop "PpqN_region/PpqG_region: invalid parameters: need 1 + V/(1000*eps) > 0"
+      if (.not. (pars%p0 > 0.0d0 .and. pars%q0 > 0.0d0)) &
+          error stop "PpqN_region/PpqG_region: invalid parameters: p0 and q0 must be > 0"
+      if (.not. (pars%p10 >= pars%p0)) &
+          error stop "PpqN_region/PpqG_region: invalid parameters: p10 < p0 makes the phonon resolution sigp^2 negative at high energy"
+      if (.not. (pars%q10 >= pars%q0)) &
+          error stop "PpqN_region/PpqG_region: invalid parameters: q10 < q0 makes the charge resolution sigq^2 negative at high energy"
+      if (.not. is_gamma) then
+          if (.not. (pars%k > 0.0d0)) &
+              error stop "PpqN_region: invalid parameters: k must be > 0"
+          if (.not. (pars%Zfac > 0.0d0 .and. pars%Zfac < huge(1.0d0))) &
+              error stop "PpqN_region: invalid parameters: Z must be > 0"
+      end if
+  end subroutine validate_region_inputs
+
+  ! Doubling-verified driver for PpqN_region/PpqG_region:
+  ! order 32 vs 64, then 64 vs 128, then 128 vs 256; accepts the finer
+  ! estimate the first time two successive orders agree within
+  ! max(epsabs, epsrel*|result|), or fails loudly (error stop) if order
+  ! 256 still hasn't converged rather than silently returning an
+  ! unverified number -- see the module header comment above for why this
+  ! replaced an earlier Cuba/Cuhre implementation.  The outer Ep range is
+  ! first split at any window-clipping breakpoints (find_window_breakpoints)
+  ! so each Gauss-Legendre pass only ever integrates a smooth piece.
+  pure function region_integral_gl(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
+      pars, is_gamma) result(res)
+      real(c_double), intent(in) :: ep_min, ep_max, eq_min, eq_max, epsrel, epsabs
+      type(detector_params_t), intent(in) :: pars
+      logical, intent(in) :: is_gamma
+      real(c_double) :: res
+
+      real(c_double), parameter :: n_window_widths = 8.0d0
+      integer, parameter :: n_tab = region_ridge_n_tab
+      real(c_double) :: ep_tab(n_tab), eq_tab(n_tab)
+      real(c_double) :: er_hi, brk(2), tmp
+      integer :: n_brk, n_seg
+      real(c_double) :: ep_bounds(4)
+      real(c_double) :: res32, res64, res128, res256
+
+      call validate_region_inputs(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, pars, is_gamma)
+
+      er_hi = max(ep_max, eq_max) * 1.5d0 + 10.0d0
+      call build_ridge_table(pars, is_gamma, er_hi, n_tab, ep_tab, eq_tab)
+
+      call find_window_breakpoints(ep_min, ep_max, eq_min, eq_max, ep_tab, eq_tab, n_tab, &
+                                    pars, n_window_widths, brk, n_brk)
+      if (n_brk == 2 .and. brk(1) > brk(2)) then
+          tmp = brk(1); brk(1) = brk(2); brk(2) = tmp
+      end if
+      select case (n_brk)
+      case (0)
+          n_seg = 1
+          ep_bounds(1:2) = [ep_min, ep_max]
+      case (1)
+          n_seg = 2
+          ep_bounds(1:3) = [ep_min, brk(1), ep_max]
+      case default
+          n_seg = 3
+          ep_bounds(1:4) = [ep_min, brk(1), brk(2), ep_max]
+      end select
+
+      ! Tried pairing the inner Eq sweep with the next-LOWER order than
+      ! the outer Ep sweep (32/16, 64/32, ...), reasoning that the
+      ! ridge-centred window needs less resolution -- measured slower
+      ! overall despite each level costing less, because the coarser Eq
+      ! resolution made coarse/fine agreement harder to reach, forcing
+      ! escalation to a higher Ep order than the matched-order scheme
+      ! needed.  Kept both orders equal per level instead.
+      res32 = gl_multi_segment_pass(ep_bounds, n_seg, eq_min, eq_max, ep_tab, eq_tab, n_tab, &
+                                     pars, is_gamma, n_window_widths, &
+                                     gl_nodes_32, gl_weights_32, 32, gl_nodes_32, gl_weights_32, 32)
+      res64 = gl_multi_segment_pass(ep_bounds, n_seg, eq_min, eq_max, ep_tab, eq_tab, n_tab, &
+                                     pars, is_gamma, n_window_widths, &
+                                     gl_nodes_64, gl_weights_64, 64, gl_nodes_64, gl_weights_64, 64)
+      if (gl_converged(res32, res64, epsrel, epsabs)) then
+          res = res64
+          return
+      end if
+
+      res128 = gl_multi_segment_pass(ep_bounds, n_seg, eq_min, eq_max, ep_tab, eq_tab, n_tab, &
+                                      pars, is_gamma, n_window_widths, &
+                                      gl_nodes_128, gl_weights_128, 128, gl_nodes_128, gl_weights_128, 128)
+      if (gl_converged(res64, res128, epsrel, epsabs)) then
+          res = res128
+          return
+      end if
+
+      res256 = gl_multi_segment_pass(ep_bounds, n_seg, eq_min, eq_max, ep_tab, eq_tab, n_tab, &
+                                      pars, is_gamma, n_window_widths, &
+                                      gl_nodes_256, gl_weights_256, 256, gl_nodes_256, gl_weights_256, 256)
+      if (gl_converged(res128, res256, epsrel, epsabs)) then
+          res = res256
+          return
+      end if
+
+      error stop "PpqN_region/PpqG_region: Gauss-Legendre doubling " // &
+                  "did not converge to the requested epsrel/epsabs by order 256"
+  end function region_integral_gl
 
 end submodule PpqFort_s

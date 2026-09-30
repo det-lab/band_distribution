@@ -39,7 +39,7 @@ import matplotlib.pyplot as plt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "python"))
-import pq_dist_v9 as ppq
+import pq_dist_v10 as ppq
 import sample_from_pdf as spdf
 from band_breakpoints import make_ridge_breakpoints
 from chisquare_harness import run_chisquare_test

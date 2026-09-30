@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: band_distribution
+type: software
+abstract: >-
+  Probability densities of (Ep, Eq) -- total phonon and total charge energy -- for
+  electron recoils (PpqG) and nuclear recoils (PpqN) in cryogenic germanium dark matter
+  detectors, given a set of detector parameters.  A Fortran library parallelized with
+  do concurrent, with Python bindings, region-normalization integrals, and precomputed
+  normalization tables for MCMC.
+authors:
+  - family-names: Roberts
+    given-names: Amy
+    affiliation: University of Colorado Denver
+    orcid: "https://orcid.org/0000-0001-8538-9155"
+  - family-names: Rouson
+    given-names: Damian
+    affiliation: Lawrence Berkeley National Laboratory
+    orcid: "https://orcid.org/0000-0002-2344-868X"
+repository-code: "https://github.com/det-lab/band_distribution"
+license: BSD-3-Clause
+keywords:
+  - dark matter
+  - germanium detectors
+  - Fano factor
+  - nuclear recoil
+  - electron recoil
+  - Fortran
+references:
+  - type: data
+    title: band_distribution normalization tables
+    doi: 10.5281/zenodo.23048215   # concept DOI: all versions (new windows are added as versions)
+    authors:
+      - family-names: Roberts
+        given-names: Amy
+        orcid: "https://orcid.org/0000-0001-8538-9155"
+      - family-names: Rouson
+        given-names: Damian
+        orcid: "https://orcid.org/0000-0002-2344-868X"
+    notes: >-
+      Precomputed region-normalization tables used by python/ppq_pdf.py and fetched by
+      python/normtables.py (python/table_registry.json).

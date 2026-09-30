@@ -71,7 +71,7 @@ COPY python /tmp/band_src/python/
 RUN if [ -n "$GIT_REF" ]; then \
         echo "Building band_distribution @ $GIT_REF (overriding local checkout)" && \
         rm -rf /tmp/band_src && \
-        git clone https://github.com/pibion/band_distribution.git /tmp/band_src && \
+        git clone https://github.com/det-lab/band_distribution.git /tmp/band_src && \
         cd /tmp/band_src && git checkout "$GIT_REF"; \
     else \
         echo "Building band_distribution from the local checkout"; \
@@ -101,6 +101,12 @@ RUN fpm build --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPOR
 
 # Needed to find the shared objects from within Python
 ENV LD_LIBRARY_PATH=/app/lib:${LD_LIBRARY_PATH}
+
+# Published normalization tables (python/table_registry.json), fetched and
+# hash-checked at build time -- HPC compute nodes often have no internet.
+# python/normtables.py (and so PpqPDF(ppqn_table=NAME)) finds them here.
+ENV BAND_TABLES_DIR=/app/tables
+RUN mkdir -p /app/tables && python /app/python/normtables.py fetch --all
 
 CMD fpm test --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release \
     && echo "--- profile_driver output ---" \

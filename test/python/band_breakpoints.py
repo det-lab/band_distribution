@@ -76,7 +76,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "python"))
-import pq_dist_v9 as ppq
+import pq_dist_v10 as ppq
 
 
 def make_ridge_breakpoints(band, *, k, Z, eps, V,
