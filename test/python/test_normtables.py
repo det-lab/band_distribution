@@ -71,9 +71,11 @@ try:
     with open(doi_registry, "w") as f:
         json.dump({"tables": {}}, f)
     nt.register([table], doi="10.5281/zenodo.1234567", registry=doi_registry)
-    check("register --doi writes a pooch doi: URL",
+    check("register --doi writes the record's direct https file URL",
           nt.load_registry(doi_registry)["NR_ep2.5-350_eq0.75-200"]["url"]
-          == "doi:10.5281/zenodo.1234567/norm_NR_ep2.5-350_eq0.75-200.h5")
+          == "https://zenodo.org/records/1234567/files/norm_NR_ep2.5-350_eq0.75-200.h5?download=1")
+    check("register --doi refuses a non-Zenodo DOI",
+          raises(ValueError, lambda: nt.register([table], doi="10.1000/xyz", registry=doi_registry)))
     check("register refuses a file not named norm_<name>.h5",
           raises(ValueError, lambda: nt.register([registry], url_base=base, registry=registry)))
 

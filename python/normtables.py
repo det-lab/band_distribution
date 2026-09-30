@@ -72,9 +72,21 @@ def sha256(path):
     return h.hexdigest()
 
 
+def zenodo_file_url(doi, fname):
+    """The direct download URL of file `fname` in the Zenodo record with
+    this version DOI (10.5281/zenodo.<record id>).  Plain https rather than
+    pooch's doi: protocol, which older pooch versions lack; just as fixed,
+    since a published record's files cannot change (and the hash is checked)."""
+    prefix = "10.5281/zenodo."
+    if not (doi.startswith(prefix) and doi[len(prefix):].isdigit()):
+        raise ValueError(f"{doi!r} is not a Zenodo DOI (10.5281/zenodo.<record id>)")
+    return f"https://zenodo.org/records/{doi[len(prefix):]}/files/{fname}?download=1"
+
+
 def register(paths, *, doi=None, url_base=None, registry=REGISTRY):
     """Add (or update) registry entries for local table files that have been
-    uploaded to Zenodo record `doi` (or to `url_base`/<file>)."""
+    uploaded to the Zenodo record with version DOI `doi` (or to
+    `url_base`/<file>)."""
     if (doi is None) == (url_base is None):
         raise ValueError("give exactly one of doi or url_base")
     with open(registry) as f:
@@ -83,7 +95,7 @@ def register(paths, *, doi=None, url_base=None, registry=REGISTRY):
         fname = os.path.basename(p)
         if not (fname.startswith("norm_") and fname.endswith(".h5")):
             raise ValueError(f"{fname}: table files are named norm_<name>.h5")
-        url = f"doi:{doi}/{fname}" if doi else f"{url_base.rstrip('/')}/{fname}"
+        url = zenodo_file_url(doi, fname) if doi else f"{url_base.rstrip('/')}/{fname}"
         reg["tables"][fname[len("norm_"):-len(".h5")]] = {"file": fname, "url": url, "sha256": sha256(p)}
     reg["tables"] = dict(sorted(reg["tables"].items()))
     with open(registry, "w") as f:
@@ -101,7 +113,7 @@ def main(argv=None):
     p = sub.add_parser("register", help="add uploaded table files to the registry")
     p.add_argument("files", nargs="+")
     g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument("--doi", help="Zenodo record DOI, e.g. 10.5281/zenodo.1234567")
+    g.add_argument("--doi", help="the Zenodo record's version DOI (not the concept DOI), e.g. 10.5281/zenodo.1234567")
     g.add_argument("--url-base", help="any other location serving <url-base>/<file>")
     a = ap.parse_args(argv)
 
