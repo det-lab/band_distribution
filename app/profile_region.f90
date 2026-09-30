@@ -1,6 +1,6 @@
 program profile_region
   use iso_c_binding, only : c_double
-  use PpqFort_m, only : PpqN_region_adaptive, PpqG_region_adaptive
+  use PpqFort_m, only : PpqN_region, PpqG_region
   implicit none
 
   ! Same physics parameters used throughout test/python/test_region_integral.py
@@ -27,25 +27,25 @@ program profile_region
 
   call system_clock(t_start, t_rate)
   do iter = 1, n_iter
-    resN = PpqN_region_adaptive(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
+    resN = PpqN_region(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
                                  k, Z, F0, eps, V, p0, p10, q0, q10)
   end do
   call system_clock(t_end)
   t_total = real(t_end - t_start, c_double) / real(t_rate, c_double)
   print '(a,f8.3,a,i0,a,f8.2,a)', &
-      "PpqN_region_adaptive: ", t_total, " s for ", n_iter, " calls => ", &
+      "PpqN_region: ", t_total, " s for ", n_iter, " calls => ", &
       t_total / real(n_iter, c_double) * 1.0d3, " ms/call"
   print '(a,es14.6)', "  result: ", resN
 
   call system_clock(t_start, t_rate)
   do iter = 1, n_iter
-    resG = PpqG_region_adaptive(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
+    resG = PpqG_region(ep_min, ep_max, eq_min, eq_max, epsrel, epsabs, &
                                  F0, eps, V, p0, p10, q0, q10)
   end do
   call system_clock(t_end)
   t_total = real(t_end - t_start, c_double) / real(t_rate, c_double)
   print '(a,f8.3,a,i0,a,f8.2,a)', &
-      "PpqG_region_adaptive: ", t_total, " s for ", n_iter, " calls => ", &
+      "PpqG_region: ", t_total, " s for ", n_iter, " calls => ", &
       t_total / real(n_iter, c_double) * 1.0d3, " ms/call"
   print '(a,es14.6)', "  result: ", resG
 
