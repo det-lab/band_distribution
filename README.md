@@ -247,6 +247,20 @@ There are multiple Dockerfiles, each building the code with a compiler from a di
 |Intel | Dockerfile_intel    | Recommended for work that needs speed |
 |LLVM  | Dockerfile_llvm     | Same performance as the Intel build; preferred for any image meant to be published, since `environment.yaml` never installs Intel's ifx unless a Dockerfile explicitly adds it (`Dockerfile_intel`/`_tau_intel` do, via `conda install -n band ifx_linux-64` after the shared environment is created) |
 
+**Most users don't need to build anything.** The LLVM image is published to GitHub's container registry (no Intel binaries, no license question, and no Docker install needed on the machine that runs it):
+
+```
+docker pull ghcr.io/det-lab/band_distribution_llvm:v1.1.3
+```
+
+or, directly to a `.sif` for HPC — this is what `slurm/pull_container.job` does:
+
+```
+apptainer build band.sif docker://ghcr.io/det-lab/band_distribution_llvm:v1.1.3
+```
+
+Replace `v1.1.3` with any other release tag (see [releases](https://github.com/det-lab/band_distribution/releases) or `git tag -l`), or `latest` for the newest. Building locally (below) is for development, a compiler this project doesn't publish, or reproducing an exact local/uncommitted state.
+
 Choose which compiler you want, determine the name of the dockerfile, and then issue the following command:
 
 ```
@@ -275,6 +289,8 @@ apptainer build band.sif docker-daemon://band:latest
 
 # Build the docker container for running Jupyter and interacting with notebooks
 
+This image is also published — `docker pull ghcr.io/det-lab/band_distribution_jupyter:v1.1.3` skips the build entirely. To build it yourself instead:
+
 ```
 docker build --rm -f Dockerfile_jupyter -t band_jupyter .
 ```
@@ -283,8 +299,10 @@ docker build --rm -f Dockerfile_jupyter -t band_jupyter .
 You can issue this command from any directory.  Note the absolute path names for mounting the volume.  This enables your work to persist!  You will need to replace `/mnt/c/Users/canto/Repositories/nrFanoII` with the path to your repository directory.  You should leave `home/jovyan/work/nrFano` the same.  Note that this command refers to the nrFanoII repository, which uses this (band_distribution) repository.
 
 ```
-docker run -it --rm -p 8888:8888 -v /mnt/c/Users/canto/Repositories/nrFanoII:/home/jovyan/work/nrFano band_jupyter:latest
+docker run -it --rm -p 8888:8888 -v /mnt/c/Users/canto/Repositories/nrFanoII:/home/jovyan/work/nrFano ghcr.io/det-lab/band_distribution_jupyter:v1.1.3
 ```
+
+(use `band_jupyter:latest` in place of the `ghcr.io` tag if you built it yourself above)
 
 In notebooks, select the **Python (band)** kernel — it runs in the `band` conda environment (built from `environment.yaml`, the same environment used by the other containers), which has the compiled library's runtime dependencies and all the python packages.
 
