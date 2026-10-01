@@ -5,8 +5,11 @@ Uses chisquare_harness.run_chisquare_test (equibin bins, PDF-integrated
 expected counts, batched chi-square throws; see that module's
 docstring for the general workflow).  Specific to this test:
 
-- The PDF comes from lib/libband_distribution.so via python/ppqfort_pdf.py
-  (threaded chunked PpqN_vector calls).
+- The PDF comes from lib/libband_distribution.so via python/_ppqfort_bindings.py
+  (threaded chunked PpqN_vector calls), unnormalized -- fine here since this
+  test only checks the PDF's *shape* (sampled events vs. its own density),
+  which a constant normalization factor doesn't affect.  For a fit or MCMC,
+  use PpqPDF (python/ppq_pdf.py) instead.
 - The lintsampler grid uses feature-scaled (non-uniform) edges: the band
   width tracks the detector resolutions sigp(Ep) and sigq(Eq), which grow
   roughly linearly with energy, so the edges are spaced proportionally to
@@ -43,7 +46,7 @@ import pq_dist_v10 as ppq
 import sample_from_pdf as spdf
 from band_breakpoints import make_ridge_breakpoints
 from chisquare_harness import run_chisquare_test
-from ppqfort_pdf import make_ppqn_pdf
+from _ppqfort_bindings import make_ppqn_pdf_unnormalized
 
 # ---------------------------------------------------------------------------
 # Physics parameters (all explicit — the Fortran wrapper takes no defaults)
@@ -95,7 +98,7 @@ ridge_breakpoints = make_ridge_breakpoints(
 # ---------------------------------------------------------------------------
 print("Building Fortran PpqN pdf wrapper "
       f"({N_WORKERS} workers)...")
-pdf_fort = make_ppqn_pdf(**PARAMS, n_workers=N_WORKERS)
+pdf_fort = make_ppqn_pdf_unnormalized(**PARAMS, n_workers=N_WORKERS)
 
 ep_edges = spdf.make_feature_scaled_edges(sigp, *EP_RANGE, CELLS_PER_SIGMA)
 eq_edges = spdf.make_feature_scaled_edges(sigq, *EQ_RANGE, CELLS_PER_SIGMA)

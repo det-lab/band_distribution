@@ -1,4 +1,20 @@
 """
+PpqPDF is the one intended entrypoint for using this library in a fit or
+MCMC -- if you want normalized PDF values or a likelihood, start here:
+
+    from ppq_pdf import PpqPDF
+    fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+                 norm_epsrel=1e-4, norm_epsabs=1e-10)
+    normalized = fit.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V,
+                                             p0=p0, p10=p10, q0=q0, q10=q10)
+
+See the README's "Normalizing a likelihood fit to a region" section for the
+full walkthrough, including precomputed tables for MCMC.  Everything else in
+python/ (_ppqfort_bindings.py's raw, unnormalized PDF evaluation; normgrid.py's
+table machinery; pq_dist_v10.py's pure-Python reference implementation) is
+either what PpqPDF is built from or infrastructure for maintaining this
+library -- not a second way to use it.
+
 PpqPDF: the fixed context for one fit/MCMC run -- an (Ep, Eq) region, the
 observed dataset, and the normalization-integral's convergence tolerance
 -- exposing, per parameter point, the un-normalized PDF at the bound
@@ -10,11 +26,11 @@ fresh to every method call rather than bound at construction: those are
 what an MCMC step actually varies, while the region, dataset, and
 tolerance don't change across a run.
 
-Built entirely on the already-validated primitives in ppqfort_pdf.py --
+Built entirely on the already-validated primitives in _ppqfort_bindings.py --
 ppqn_region/ppqg_region (-> Fortran PpqN_region/PpqG_region, a doubling-
-verified nested Gauss-Legendre quadrature) and make_ppqn_pdf/make_ppqg_pdf
-(-> Fortran PpqN_vector/PpqG_vector) -- no new Fortran code and no new
-numerics.
+verified nested Gauss-Legendre quadrature) and make_ppqn_pdf_unnormalized/
+make_ppqg_pdf_unnormalized (-> Fortran PpqN_vector/PpqG_vector) -- no new
+Fortran code and no new numerics.
 
 For MCMC, pass precomputed normalization tables (python/normgrid.py,
 built once on a batch system) as ppqn_table/ppqg_table: the integral then
@@ -42,7 +58,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ppqfort_pdf import make_ppqg_pdf, make_ppqn_pdf, ppqg_region, ppqn_region
+from _ppqfort_bindings import make_ppqg_pdf_unnormalized, make_ppqn_pdf_unnormalized, ppqg_region, ppqn_region
 
 
 class PpqPDF:
@@ -73,7 +89,7 @@ class PpqPDF:
         reaches outside one.
     n_workers : int or None
         Threads used for large batched PpqN_vector/PpqG_vector calls;
-        see make_ppqn_pdf.
+        see make_ppqn_pdf_unnormalized.
     """
 
     def __init__(self, ep_min, ep_max, eq_min, eq_max, ep_data, eq_data, *,
@@ -156,8 +172,8 @@ class PpqPDF:
 
     def ppqn_values(self, *, k, Z, F0, eps, V, p0, p10, q0, q10):
         """Un-normalized PpqN at the bound dataset."""
-        pdf_func = make_ppqn_pdf(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10,
-                                  q0=q0, q10=q10, n_workers=self.n_workers)
+        pdf_func = make_ppqn_pdf_unnormalized(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10,
+                                               q0=q0, q10=q10, n_workers=self.n_workers)
         return pdf_func(self.ep_data, self.eq_data)
 
     def ppqn_normalized_values(self, *, k, Z, F0, eps, V, p0, p10, q0, q10):
@@ -177,8 +193,8 @@ class PpqPDF:
 
     def ppqg_values(self, *, F0, eps, V, p0, p10, q0, q10):
         """Un-normalized PpqG at the bound dataset."""
-        pdf_func = make_ppqg_pdf(F0=F0, eps=eps, V=V, p0=p0, p10=p10,
-                                  q0=q0, q10=q10, n_workers=self.n_workers)
+        pdf_func = make_ppqg_pdf_unnormalized(F0=F0, eps=eps, V=V, p0=p0, p10=p10,
+                                               q0=q0, q10=q10, n_workers=self.n_workers)
         return pdf_func(self.ep_data, self.eq_data)
 
     def ppqg_normalized_values(self, *, F0, eps, V, p0, p10, q0, q10):

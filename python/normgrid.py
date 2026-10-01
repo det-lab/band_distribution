@@ -1,7 +1,7 @@
 """
 Precomputed, interpolated region-normalization tables for MCMC.
 
-The region-normalization integral (ppqfort_pdf.ppqn_region/ppqg_region) is
+The region-normalization integral (_ppqfort_bindings.ppqn_region/ppqg_region) is
 ~2 s per call -- fine for one fit, hopeless inside an MCMC.  But the region
 is fixed for a whole run and the integral is a very smooth function of the
 handful of physics parameters the MCMC varies, so it can be evaluated once
@@ -279,7 +279,7 @@ def _evaluate(spec, params, epsrel):
     if fake:
         return 1.0 + sum(params[k] * (i + 1) for i, k in enumerate(sorted(params))) * 1e-3
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from ppqfort_pdf import ppqg_region, ppqn_region
+    from _ppqfort_bindings import ppqg_region, ppqn_region
     fn = ppqn_region if spec["band"] == "NR" else ppqg_region
     return fn(*spec["region"], epsrel=epsrel, epsabs=spec["epsabs"], **params)
 
@@ -404,8 +404,8 @@ def merge(spec_path, result_paths, out_path, allow_missing=False):
     lib_version = ""
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import ppqfort_pdf
-        lib_version = ".".join(map(str, ppqfort_pdf.version()))
+        import _ppqfort_bindings
+        lib_version = ".".join(map(str, _ppqfort_bindings.version()))
     except Exception:
         pass
     with h5py.File(out_path, "w") as f:

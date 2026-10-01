@@ -1,6 +1,22 @@
 """
-Python wrapper exposing the Fortran PpqN / PpqG PDFs as vectorized
-pdf_func(Ep_flat, Eq_flat) -> values_flat callables.
+Private: low-level ctypes bindings to the compiled Fortran
+band_distribution library (lib/libband_distribution.so).
+
+Leading underscore means what it usually does -- this is not a public API
+and carries no stability promise.  If you're using this library to do a fit
+or MCMC, use PpqPDF in python/ppq_pdf.py instead; that is the one intended
+entrypoint.  PpqPDF combines the pieces here (an UNNORMALIZED PDF and a
+separate region-normalization integral) correctly, raises instead of
+extrapolating when a precomputed table is used, and is what the rest of
+this file's docstrings assume you already have if you're reading them.
+This module exists for PpqPDF, python/normgrid.py, and the test suite
+(which legitimately need the raw, unnormalized evaluation -- see each
+test's own comment) to build on.
+
+make_ppqn_pdf_unnormalized / make_ppqg_pdf_unnormalized build vectorized
+pdf_func(Ep_flat, Eq_flat) -> values_flat callables.  The "_unnormalized"
+is not decorative: dividing by ppqn_region/ppqg_region's integral over your
+analysis region is required before these values are a probability density.
 
 All physics parameters are required keyword arguments — there are no
 defaults, so the caller must specify the model fully.
@@ -100,10 +116,12 @@ def version():
     return (major.value, minor.value, patch.value)
 
 
-def make_ppqn_pdf(*, k, Z, F0, eps, V, p0, p10, q0, q10, n_workers=None):
+def make_ppqn_pdf_unnormalized(*, k, Z, F0, eps, V, p0, p10, q0, q10, n_workers=None):
     """
     Build pdf_func(Ep_flat, Eq_flat) -> values_flat backed by the Fortran
-    PpqN (nuclear recoil band PDF).
+    PpqN (nuclear recoil band PDF).  NOT a probability density on its own --
+    divide by ppqn_region's integral over your region first.  For a fit or
+    MCMC, use PpqPDF (python/ppq_pdf.py) instead, which does that for you.
 
     All physics parameters are required:
       k, Z           : Lindhard ionization yield calibration constant and
@@ -130,9 +148,10 @@ def make_ppqn_pdf(*, k, Z, F0, eps, V, p0, p10, q0, q10, n_workers=None):
     return _make_threaded_pdf(_eval_chunk, n_workers)
 
 
-def make_ppqg_pdf(*, F0, eps, V, p0, p10, q0, q10, n_workers=None):
-    """Same as make_ppqn_pdf but for the Fortran PpqG (gamma / ER band).
-    The yield is fixed at Y = 1 internally, so k and Z are not taken."""
+def make_ppqg_pdf_unnormalized(*, F0, eps, V, p0, p10, q0, q10, n_workers=None):
+    """Same as make_ppqn_pdf_unnormalized but for the Fortran PpqG (gamma /
+    ER band).  The yield is fixed at Y = 1 internally, so k and Z are not
+    taken.  Also NOT normalized on its own -- see that function's docstring."""
     api = _load_library()
     if n_workers is None:
         n_workers = os.cpu_count()

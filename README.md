@@ -44,6 +44,23 @@ FPM_LDFLAGS="-fopenmp" fpm install --prefix=. --compiler flang --profile release
 fpm install --prefix=. --compiler gfortran --profile release --flag "-march=native -fopenmp -ftree-parallelize-loops=4 -fcoarray=single -fPIC"
 ```
 
+# Using the library: `PpqPDF`
+
+**If you want to use this library — a fit, an MCMC, anything that needs normalized PDF values or a likelihood — `PpqPDF` (`python/ppq_pdf.py`) is the one entrypoint.** Build the shared library first (above), then:
+
+```python
+import sys
+sys.path.insert(0, "python")
+from ppq_pdf import PpqPDF
+
+fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+             norm_epsrel=1e-4, norm_epsabs=1e-10)
+normalized = fit.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V,
+                                         p0=p0, p10=p10, q0=q0, q10=q10)
+```
+
+See "Normalizing a likelihood fit to a region" below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `_ppqfort_bindings.py` (the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API), `normgrid.py`'s table machinery, `pq_dist_v10.py`'s pure-Python reference implementation — is infrastructure, not a second way to use the library.  The sections below (testing, performance) are for verifying and maintaining the library itself; skip to "Normalizing a likelihood fit to a region" if you just want to use it.
+
 # Testing the python calls
 This code builds a library that may be called within python (this is the original intent of the code).  Build and install the shared library first (see "Building the shared library for the python interface" above).  The python test scripts live in `test/python/` and should be run from the repository root.  To test the python calls, run
 
@@ -116,7 +133,7 @@ docker run --rm -v $(pwd)/figures:/app/figures band_distribution_intel \
 
 # Normalizing a likelihood fit to a region: `PpqPDF`
 
-A likelihood fit needs the *un-normalized* PDF at each data point and the PDF's integral over the fit region (to normalize it) — both re-evaluated at every step as the fit/MCMC explores parameter space.  Computing that normalization with `scipy.integrate.quad` is several seconds per call (it evaluates the PDF one point at a time, at the ~3-25 ms/point *scalar* cost — see `python/ppqfort_pdf.py`'s docstring); `python/ppq_pdf.py`'s `PpqPDF` instead uses a doubling-verified nested Gauss-Legendre quadrature evaluated in one batched, thread-parallel call (`PpqN_region`/`PpqG_region` in Fortran — the ridge location/width is already known exactly, same physics as `test/python/band_breakpoints.py`'s ridge/width derivation, so it needs far fewer points than a naive grid for the same accuracy), landing well under a second per call even for a wide region under `ifx`/`flang`.
+A likelihood fit needs the *un-normalized* PDF at each data point and the PDF's integral over the fit region (to normalize it) — both re-evaluated at every step as the fit/MCMC explores parameter space.  Computing that normalization with `scipy.integrate.quad` is several seconds per call (it evaluates the PDF one point at a time, at the ~3-25 ms/point *scalar* cost — see `python/_ppqfort_bindings.py`'s docstring); `python/ppq_pdf.py`'s `PpqPDF` instead uses a doubling-verified nested Gauss-Legendre quadrature evaluated in one batched, thread-parallel call (`PpqN_region`/`PpqG_region` in Fortran — the ridge location/width is already known exactly, same physics as `test/python/band_breakpoints.py`'s ridge/width derivation, so it needs far fewer points than a naive grid for the same accuracy), landing well under a second per call even for a wide region under `ifx`/`flang`.
 
 `PpqPDF` bundles the things that *don't* change across a fit/MCMC run — the region, the observed dataset, and the normalization quadrature's convergence tolerance — at construction, so every subsequent call only needs the physics parameters that the fit is actually varying:
 

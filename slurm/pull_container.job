@@ -100,10 +100,10 @@ ls -lh "$DEST"
 singularity exec "$DEST" /opt/anaconda/envs/band/bin/python -c "
 import sys
 sys.path.insert(0, '/app/python')
-import ppqfort_pdf, normgrid
-print('library version', '.'.join(map(str, ppqfort_pdf.version())))
+import _ppqfort_bindings, normgrid
+print('library version', '.'.join(map(str, _ppqfort_bindings.version())))
 print('region entry points',
-      hasattr(ppqfort_pdf, 'ppqn_region'), hasattr(ppqfort_pdf, 'ppqg_region'))
+      hasattr(_ppqfort_bindings, 'ppqn_region'), hasattr(_ppqfort_bindings, 'ppqg_region'))
 print('normgrid axes', normgrid.AXES)
 "
 

@@ -49,7 +49,10 @@ sys.path.insert(0, str(REPO_ROOT / "python"))
 
 from band_breakpoints import make_ridge_breakpoints
 from generate_events import generate_ER_events
-from ppqfort_pdf import make_ppqg_pdf
+# Unnormalized is fine: this test only compares the PDF's *shape* against
+# simulated events (chi-square binning), not absolute probability.  For a
+# fit or MCMC, use PpqPDF (python/ppq_pdf.py) instead.
+from _ppqfort_bindings import make_ppqg_pdf_unnormalized
 from chisquare_harness import run_chisquare_test
 
 # ---------------------------------------------------------------------------
@@ -119,7 +122,7 @@ def er_sampler(n, seed=None):
 # Build the Fortran PDF wrapper
 # ---------------------------------------------------------------------------
 print(f"Loading Fortran PpqG PDF ({N_WORKERS} workers)...")
-pdf_fort = make_ppqg_pdf(**PARAMS, n_workers=N_WORKERS)
+pdf_fort = make_ppqg_pdf_unnormalized(**PARAMS, n_workers=N_WORKERS)
 
 # Quick sanity check on the sampler
 print("Spot-checking sampler output range...")

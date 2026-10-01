@@ -20,7 +20,9 @@ sys.path.insert(0, str(REPO_ROOT / "python"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from band_breakpoints import make_ridge_breakpoints
-from ppqfort_pdf import make_ppqg_pdf
+# Unnormalized: debug_bin inspects the PDF's shape over one bin, not an
+# absolute probability.  For a fit or MCMC, use PpqPDF (python/ppq_pdf.py).
+from _ppqfort_bindings import make_ppqg_pdf_unnormalized
 from chisquare_harness import debug_bin
 
 # Same ER/PpqG parameters as test_chisquare_er_simulator.py.
@@ -41,7 +43,7 @@ BIN = (64.17183111582968, 66.41909324688707, 33.49076000562251, 184.461887092046
 # (debug_bin's brute-force reference calls it with tens of thousands of
 # points at once); the quad-driven calls are all single points and are
 # unaffected, so this doesn't change what debug_bin demonstrates.
-pdf_fort = make_ppqg_pdf(**PARAMS, n_workers=os.cpu_count())
+pdf_fort = make_ppqg_pdf_unnormalized(**PARAMS, n_workers=os.cpu_count())
 ridge_breakpoints = make_ridge_breakpoints(
     "ER", k=None, Z=None, eps=PARAMS["eps"], V=PARAMS["V"],
     p0=PARAMS["p0"], p10=PARAMS["p10"],

@@ -1,6 +1,6 @@
 """
 Checks the compiled library's reported version (PpqFort_version(), via
-ppqfort_pdf.version()) against fpm.toml's version field.
+_ppqfort_bindings.version()) against fpm.toml's version field.
 
 PpqFort_version()'s constants come from src/version.f90.inc, generated
 from fpm.toml by scripts/generate_version_include.py (run before building;
@@ -22,7 +22,7 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO_ROOT, "python"))
 sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
-import ppqfort_pdf
+import _ppqfort_bindings
 import generate_version_include as genver
 
 failures = []
@@ -35,7 +35,7 @@ def check(name, cond, detail=""):
 
 
 fpm_version = genver.read_version()
-lib_version = ppqfort_pdf.version()
+lib_version = _ppqfort_bindings.version()
 check("compiled library reports fpm.toml's version", lib_version == fpm_version,
       f"fpm.toml: {fpm_version}, library: {lib_version}")
 
