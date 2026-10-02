@@ -43,7 +43,7 @@ Need a different compiler, local development, or to reproduce an exact uncommitt
 
 # Using the library: `PpqPDF`
 
-**If you want to use this library — a fit, an MCMC, anything that needs normalized PDF values or a likelihood — `PpqPDF` (`python/ppq_pdf.py`) is the one entrypoint.** Inside a published container (above) the shared library is already built; building from source instead, see [Building from source](#building-from-source) first.  Then:
+**If you want to use this library — a fit, an MCMC, anything that needs normalized PDF values or a likelihood — `PpqPDF` (`python/ppq_pdf.py`) is the one entrypoint.** Inside a published container (above) the shared library is already built.  If you're building from source instead, see [Building from source](#building-from-source) first.  Then:
 
 ```python
 import sys
