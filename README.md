@@ -5,48 +5,45 @@ This code is useful for dark matter searches where detector output is Ep (total 
 
 Citation metadata for the code is in `CITATION.cff` (GitHub's "Cite this repository" button); each release is archived on Zenodo.  The precomputed normalization tables are a separate dataset, [doi:10.5281/zenodo.23048215](https://doi.org/10.5281/zenodo.23048215) (all versions; one version per added fit window), which `python/normtables.py` fetches by name.
 
-# Building and testing with the Fortran Package Manager (`fpm`)
+# Getting started: use the published containers
 
-This project uses the Fortran Package Manager (fpm).  You'll need to install that to build this project; please see https://fpm.fortran-lang.org/install/index.html#install for instructions on installing fpm on your system.  Currently (Oct 2026), both building from source and installing via `conda` get the same version, 0.13.0.
+Most users don't need to build anything from source.  Pull a container, then skip to [Using the library: `PpqPDF`](#using-the-library-ppqpdf) below.
 
-Before `fpm build`/`fpm test`, generate `src/version.f90.inc` (not committed — `src/PpqFort_m.f90` `include`s it, so the build fails loudly if you skip this rather than silently reporting a stale version):
+## The LLVM container (library, HPC)
 
-```
-python scripts/generate_version_include.py
-```
-
-Every Dockerfile in this repo runs this automatically; it's only a manual step for a local, non-container build. `PpqFort_version()` then reports exactly `fpm.toml`'s `version` field — there is no second copy to keep in sync by hand.
-
-The code parallelizes its integration loops with `do concurrent` using locality specifiers, including the Fortran 2023 `reduce` clause, so you need a recent compiler.  The versions below have been verified via the docker containers in this repository:
-
-|Vendor| Version(s)      |  Build/Test Command                                                                                                                        |
-|------|-----------------|--------------------------------------------------------------------------------------------------------------------------------------------|
-|GNU   | 15.2.0          | `fpm test --compiler gfortran --profile release --flag "-march=native -fopenmp -ftree-parallelize-loops=4 -fcoarray=single -fPIC"`         |
-|Intel | 2025.2.1        | `fpm test --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release`                                        |
-|LLVM  | 22              | `fpm test --compiler flang --profile release --flag "-O3 -fopenmp -fdo-concurrent-to-openmp=host"`                                         |
-
-Notes:
-* GNU: gfortran is slow.  It has no option for mapping `do concurrent` onto threads (the auto-parallelizer in `-ftree-parallelize-loops` cannot parallelize these loops because they contain function calls), so the band integrals run **serially** in gfortran builds — measured at 1.0 effective threads vs 17.6 for ifx on the same machine, making per-event likelihood evaluation ~25x slower there (roughly the core count times a ~1.5x per-core gap from the vector math library).  The gfortran build is fine for verifying the physics and the Python interface, but use ifx or flang for production likelihood work (MCMC).
-* Intel: the shared library must also be linked against the Intel OpenMP runtime for the Python ctypes interface to work; the Intel container does this by setting `FPM_LDFLAGS="-liomp5"`.  The `-fpp -DHAVE_MULTI_IMAGE_SUPPORT=0` flags are for the Julienne dependency.  `-qopenmp` maps `do concurrent` onto the OpenMP thread pool.
-* LLVM: the compiler is invoked as `flang`.  `-fdo-concurrent-to-openmp=host` is what parallelizes the `do concurrent` loops; without it they compile to serial loops.  The LLVM container sets `FPM_LDFLAGS="-fopenmp"` so the shared library links against `libomp`.  Intel and LLVM builds benchmark identically (~6 us per event in vector mode on 18 emulated cores).
-
-## Building the shared library for the python interface
-The python wrappers load `lib/libband_distribution.so`, which `fpm install` builds and places under the repository root.  Use the same flags as the test commands above; for Intel and LLVM, `FPM_LDFLAGS` must also be set so the *shared library* links its OpenMP runtime — without it the library builds but fails to load from python with undefined `__kmpc_*` symbols:
+No Intel binaries, no license question, and no compiler needed on the machine that runs it:
 
 ```
-# Intel
-FPM_LDFLAGS="-liomp5" fpm install --prefix=. --compiler ifx --profile release --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0"
-
-# LLVM
-FPM_LDFLAGS="-fopenmp" fpm install --prefix=. --compiler flang --profile release --flag "-O3 -fopenmp -fdo-concurrent-to-openmp=host"
-
-# GNU (verification only — see the notes above)
-fpm install --prefix=. --compiler gfortran --profile release --flag "-march=native -fopenmp -ftree-parallelize-loops=4 -fcoarray=single -fPIC"
+docker pull ghcr.io/det-lab/band_distribution_llvm:v1.1.4
 ```
+
+or, directly to a `.sif` for HPC — this is what `slurm/pull_container.job` does:
+
+```
+apptainer build band.sif docker://ghcr.io/det-lab/band_distribution_llvm:v1.1.4
+```
+
+Replace `v1.1.4` with any other release tag (see [releases](https://github.com/det-lab/band_distribution/releases) or `git tag -l`), or `latest` for the newest.
+
+## The Jupyter container (notebooks)
+
+```
+docker pull ghcr.io/det-lab/band_distribution_jupyter:v1.1.4
+```
+
+Run it with your own repository mounted so your notebooks and edits persist (replace the path before the `:` with your own repository's path; leave `/home/jovyan/work/nrFano` as-is).  The example below mounts `nrFanoII`, a downstream repository that uses `band_distribution`:
+
+```
+docker run -it --rm -p 8888:8888 -v /mnt/c/Users/canto/Repositories/nrFanoII:/home/jovyan/work/nrFano ghcr.io/det-lab/band_distribution_jupyter:v1.1.4
+```
+
+In notebooks, select the **Python (band)** kernel — it runs in the `band` conda environment, which has the compiled library's runtime dependencies and all the python packages.
+
+Need a different compiler, local development, or to reproduce an exact uncommitted state instead of a release?  See [Building from source](#building-from-source).
 
 # Using the library: `PpqPDF`
 
-**If you want to use this library — a fit, an MCMC, anything that needs normalized PDF values or a likelihood — `PpqPDF` (`python/ppq_pdf.py`) is the one entrypoint.** Build the shared library first (above), then:
+**If you want to use this library — a fit, an MCMC, anything that needs normalized PDF values or a likelihood — `PpqPDF` (`python/ppq_pdf.py`) is the one entrypoint.** Inside a published container (above) the shared library is already built; building from source instead, see [Building from source](#building-from-source) first.  Then:
 
 ```python
 import sys
@@ -67,77 +64,7 @@ normalized = band_pdf.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-
 
 The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  **If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below) and your region doesn't match the one a table was built for exactly, `PpqPDF` raises at construction rather than silently normalizing wrong.**  The fix is to build a new table for your region — see [Precomputed normalization tables for MCMC](#precomputed-normalization-tables-for-mcmc-pythonnormgridpy), in particular "One command for a whole table" below.
 
-See "Normalizing a likelihood fit to a region" below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `_ppqfort_bindings.py` (the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API), `normgrid.py`'s table machinery, `pq_dist_v10.py`'s pure-Python reference implementation — is infrastructure, not a second way to use the library.  The sections below (testing, performance) are for verifying and maintaining the library itself; skip to "Normalizing a likelihood fit to a region" if you just want to use it.
-
-# Testing the python calls
-This code builds a library that may be called within python (this is the original intent of the code).  Build and install the shared library first (see "Building the shared library for the python interface" above).  The python test scripts live in `test/python/` and should be run from the repository root.  To test the python calls, run
-
-```
-LD_LIBRARY_PATH=lib python test/python/test_PpqFort.py
-```
-
-or if you just want to test the vectorized functions `PpqN_vector` and `PpqG_vector`
-
-```
-LD_LIBRARY_PATH=lib python test/python/test_PpqFort_vectorFuncs.py
-```
-
-(`LD_LIBRARY_PATH=lib` is needed when running outside the docker containers, which set it in their environment.)
-
-See `test/python/README.md` for a map of the test scripts and their supporting modules, including where the PDF-over-bin integration lives.
-
-# PDF self-consistency tests
-These verify that data sampled from the PDFs produces Pearson chi-square values that follow the theoretical chi2(n_bins − 1) distribution.  Reference plots are committed in `figures/`.
-
-```
-python test/python/verify_sample_from_pdf.py                       # sampler moment checks (~2 s)
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_ppqn.py      # Fortran PpqN PDF (~2 min first run)
-```
-
-`test_chisquare_ppqn.py` takes the same two optional positional arguments as the simulator tests below: `n_throws` (default 100,000) and `n_bins` (default 64).  For a quick smoke test with fewer throws, run
-
-```
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_ppqn.py 2000 64
-```
-
-It caches its PDF grid evaluation in `ppqn_vertex_grid.npz` (not committed) and reuses it on later runs.
-
-The `test_chisquare_ppqn.py` timing assumes an ifx or flang build; gfortran builds run the band integrals serially (see the compiler notes above) and take correspondingly longer.
-
-# Physics-simulator validation tests
-The tests above only check that the PDFs are *self-consistent* (samples drawn from a PDF match that same PDF).  The two tests below are the stronger check: they generate events from an independent physics simulator (`test/python/generate_events.py`, which draws Er from the recoil spectrum, N from a truncated normal, and applies detector resolution) and compare the binned counts against the Fortran PDFs.  A pass means the Fortran `PpqN` / `PpqG` implementations correctly describe the physics.
-
-```
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_nr_simulator.py [n_throws] [n_bins]   # NR band vs PpqN
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_er_simulator.py [n_throws] [n_bins]   # ER band vs PpqG
-```
-
-Both write their chi-square histograms to `figures/chisquare_nr_simulator.png` and `figures/chisquare_er_simulator.png`.  `n_throws` defaults to 1000 and `n_bins` to 400.  The one-time integration of the PDF over the bins dominates the wall time, so reducing `n_bins` is the way to get a fast smoke test:
-
-```
-# smoke test: 100 throws, 64 bins
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_nr_simulator.py 100 64   # ~1 min
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_er_simulator.py 100 64   # ~1 min
-
-# full validation: 10,000 throws, 400 bins
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_nr_simulator.py 10000    # ~4 min
-LD_LIBRARY_PATH=lib python test/python/test_chisquare_er_simulator.py 10000    # ~5 min
-```
-
-(Timings measured with the ifx build, 18 workers, under x86 emulation on an Apple Silicon Mac; native x86 hardware should be faster.  gfortran builds run the band integrals serially and will be dramatically slower here — use ifx or flang.)
-
-To run inside the Intel docker container (built as `band` — see "Build the singularity/apptainer container" below), mount the repository's `figures/` directory so the plot survives the container:
-
-```
-docker run --rm -v $(pwd)/figures:/app/figures band \
-    bash --login -c "conda activate band && python /app/test/python/test_chisquare_nr_simulator.py 100 64"
-```
-
-# Performance notes
-`PpqN` / `PpqG` integrate over a window placed around the located peak(s) of the Er integrand rather than sampling the full physical range, evaluating at roughly 6 microseconds per (Ep, Eq) point in vector mode (18 threads under x86 emulation; measured via `PpqN_vector` over a representative grid).  This number assumes an ifx or flang build — gfortran builds run the band integrals serially and are ~25x slower (see the compiler notes at the top).  For likelihood loops (e.g. MCMC):
-
-* Call the vectorized entry points (`PpqN_vector` / `PpqG_vector`) with all events in one call — the parallelism lives there, and per-event scalar calls pay OpenMP fork/join overhead instead.
-* **Shuffle the event array once at load time if it is ordered.**  The vector loops split the events into one contiguous chunk per thread (static scheduling), and the loop only finishes when the slowest chunk does.  Per-event cost varies several-fold across the (Ep, Eq) plane — deep-tail events short-circuit in ~2 us while on-band events cost ~10-15 us — so an energy-ordered array hands some threads chunks of expensive events while others idle at the barrier.  Shuffling gives every chunk a similar cost mix and measured 8-15% faster than energy-ordered input.  The result is identical either way, and if your events are already in effectively random order this changes nothing.
+See [Normalizing a likelihood fit to a region](#normalizing-a-likelihood-fit-to-a-region-ppqpdf) below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `_ppqfort_bindings.py` (the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API), `normgrid.py`'s table machinery, `pq_dist_v10.py`'s pure-Python reference implementation — is infrastructure, not a second way to use the library.  See [Verification and validation](#verification-and-validation) for the test suite.
 
 # Normalizing a likelihood fit to a region: `PpqPDF`
 
@@ -175,6 +102,12 @@ def loglike(k, Z, F0, eps, V, p0, p10, q0, q10):
 
 Same shape for the ER band (`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there — also `ppqg_values`/`ppqg_integral` if you want the unnormalized value and the normalization separately). Build `band_pdf` once, outside the fit loop; call its methods once per step, inside.
 
+# Performance notes
+`PpqN` / `PpqG` integrate over a window placed around the located peak(s) of the Er integrand rather than sampling the full physical range, evaluating at roughly 6 microseconds per (Ep, Eq) point in vector mode (18 threads under x86 emulation; measured via `PpqN_vector` over a representative grid).  This number assumes an ifx or flang build — gfortran builds run the band integrals serially and are ~25x slower (see the compiler notes under [Building from source](#building-from-source)).  For likelihood loops (e.g. MCMC):
+
+* Call the vectorized entry points (`PpqN_vector` / `PpqG_vector`) with all events in one call — the parallelism lives there, and per-event scalar calls pay OpenMP fork/join overhead instead.
+* **Shuffle the event array once at load time if it is ordered.**  The vector loops split the events into one contiguous chunk per thread (static scheduling), and the loop only finishes when the slowest chunk does.  Per-event cost varies several-fold across the (Ep, Eq) plane — deep-tail events short-circuit in ~2 us while on-band events cost ~10-15 us — so an energy-ordered array hands some threads chunks of expensive events while others idle at the barrier.  Shuffling gives every chunk a similar cost mix and measured 8-15% faster than energy-ordered input.  The result is identical either way, and if your events are already in effectively random order this changes nothing.
+
 # Precomputed normalization tables for MCMC: `python/normgrid.py`
 
 Even at ~2 s, computing the normalization integral at every MCMC step is out of the question.  But the region is fixed for a whole run and the integral is a very smooth function of the physics parameters the MCMC varies, so `normgrid.py` evaluates it once on a small tensor grid (one independent integral per grid point — a good fit for the OSG) and interpolates it at tens of microseconds per step.  Separate tables for the NR band (`k, F0, V, p0, p10, q0, q10`) and the ER band (same, no `k`); `Z` and `eps` are fixed inside a table and checked on every call.
@@ -201,7 +134,7 @@ python python/normgrid.py merge --spec spec_NR.json --results 'res_*.txt' --out 
 python python/normgrid.py validate --table norm_NR.h5 --heldout-spec held_NR.json --results res_held.txt
 ```
 
-**On a Slurm cluster** use the **ifx (or flang) container, not gfortran** — gfortran runs the band integrals ~25x slower — via `slurm/normgrid.sbatch`, a job-array template (one single-core task per chunk of grid points; `OMP_NUM_THREADS=1` so an ifx build doesn't oversubscribe cores; a header comment gives the exact `sbatch` and `merge`/`validate` commands, and resubmitting the same array only redoes unfinished chunks).  It runs the container `$BAND_SIF` (default `/scratch/$USER/containers/band.sif`, as pulled by `slurm/pull_container.job`), a `band.sif` built from `Dockerfile_intel` or `Dockerfile_llvm` (see "Build the singularity/apptainer container" below), or set `BAND_NATIVE=1` to use a library you built on the cluster.  `osg/` holds a similar HTCondor template.
+**On a Slurm cluster** use the **ifx (or flang) container, not gfortran** — gfortran runs the band integrals ~25x slower — via `slurm/normgrid.sbatch`, a job-array template (one single-core task per chunk of grid points; `OMP_NUM_THREADS=1` so an ifx build doesn't oversubscribe cores; a header comment gives the exact `sbatch` and `merge`/`validate` commands, and resubmitting the same array only redoes unfinished chunks).  It runs the container `$BAND_SIF` (default `/scratch/$USER/containers/band.sif`, as pulled by `slurm/pull_container.job`), a `band.sif` built from `Dockerfile_intel` or `Dockerfile_llvm` (see Docker / Apptainer images under [Building from source](#building-from-source)), or set `BAND_NATIVE=1` to use a library you built on the cluster.  `osg/` holds a similar HTCondor template.
 
 **One command for a whole table.**  How many nodes an axis needs depends on the fit region (the same box needed 5 nodes in `q0` for Eq 4–100 and about 16 for Eq 0.75–200), so `slurm/build_table.sh` measures instead of assuming.  For a region it (1) evaluates 33 Chebyshev–Lobatto nodes along each axis at three baseline points (`python/normplan.py points`, about 700 integrals), (2) reads the Chebyshev coefficients of each axis to find the fewest nodes whose truncation error is below `TOL` (`normplan.py analyze`; it stops with an error if an axis is not resolved by 33 nodes, rather than guessing), (3) evaluates the resulting grid and a set of held-out points, and (4) merges and validates, exiting with status 1 if the worst held-out error exceeds `ACCEPT`:
 
@@ -277,28 +210,126 @@ A Gaussian prior (on `p0` or `q0`, say) must be truncated by the hard bounds: `p
 * Box bounds cannot express `p10 >= p0`.  Either fit `dp = p10 - p0` and `dq = q10 - q0` directly, bounded by the tables' own `dp`/`dq` axes (`band_pdf.ppqn_table.box["dp"]`, 0.18–0.59 by default; `dq` 0–0.353), and convert back when calling the PDF, or add the inequalities as constraints (trust-constr, SLSQP).
 * A fit that ends on a bound is being limited by the box, not the data: widen it with `BOX=` and rebuild the tables.
 
-# Build the singularity/apptainer container for HPC submissions
-There are multiple Dockerfiles, each building the code with a compiler from a different vendor (GNU, Intel, and LLVM).  
+# Verification and validation
+
+Fortran-level tests run via `fpm test` (see the compiler table under [Building from source](#building-from-source)).  The sections below test the python interface and the physics itself.
+
+## Testing the python calls
+This code builds a library that may be called within python (this is the original intent of the code).  Build and install the shared library first (see [Building from source](#building-from-source)).  The python test scripts live in `test/python/` and should be run from the repository root.  To test the python calls, run
+
+```
+LD_LIBRARY_PATH=lib python test/python/test_PpqFort.py
+```
+
+or if you just want to test the vectorized functions `PpqN_vector` and `PpqG_vector`
+
+```
+LD_LIBRARY_PATH=lib python test/python/test_PpqFort_vectorFuncs.py
+```
+
+(`LD_LIBRARY_PATH=lib` is needed when running outside the docker containers, which set it in their environment.)
+
+See `test/python/README.md` for a map of the test scripts and their supporting modules, including where the PDF-over-bin integration lives.
+
+## PDF self-consistency tests
+These verify that data sampled from the PDFs produces Pearson chi-square values that follow the theoretical chi2(n_bins − 1) distribution.  Reference plots are committed in `figures/`.
+
+```
+python test/python/verify_sample_from_pdf.py                       # sampler moment checks (~2 s)
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_ppqn.py      # Fortran PpqN PDF (~2 min first run)
+```
+
+`test_chisquare_ppqn.py` takes the same two optional positional arguments as the simulator tests below: `n_throws` (default 100,000) and `n_bins` (default 64).  For a quick smoke test with fewer throws, run
+
+```
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_ppqn.py 2000 64
+```
+
+It caches its PDF grid evaluation in `ppqn_vertex_grid.npz` (not committed) and reuses it on later runs.
+
+The `test_chisquare_ppqn.py` timing assumes an ifx or flang build; gfortran builds run the band integrals serially (see the compiler notes under [Building from source](#building-from-source)) and take correspondingly longer.
+
+## Physics-simulator validation tests
+The tests above only check that the PDFs are *self-consistent* (samples drawn from a PDF match that same PDF).  The two tests below are the stronger check: they generate events from an independent physics simulator (`test/python/generate_events.py`, which draws Er from the recoil spectrum, N from a truncated normal, and applies detector resolution) and compare the binned counts against the Fortran PDFs.  A pass means the Fortran `PpqN` / `PpqG` implementations correctly describe the physics.
+
+```
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_nr_simulator.py [n_throws] [n_bins]   # NR band vs PpqN
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_er_simulator.py [n_throws] [n_bins]   # ER band vs PpqG
+```
+
+Both write their chi-square histograms to `figures/chisquare_nr_simulator.png` and `figures/chisquare_er_simulator.png`.  `n_throws` defaults to 1000 and `n_bins` to 400.  The one-time integration of the PDF over the bins dominates the wall time, so reducing `n_bins` is the way to get a fast smoke test:
+
+```
+# smoke test: 100 throws, 64 bins
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_nr_simulator.py 100 64   # ~1 min
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_er_simulator.py 100 64   # ~1 min
+
+# full validation: 10,000 throws, 400 bins
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_nr_simulator.py 10000    # ~4 min
+LD_LIBRARY_PATH=lib python test/python/test_chisquare_er_simulator.py 10000    # ~5 min
+```
+
+(Timings measured with the ifx build, 18 workers, under x86 emulation on an Apple Silicon Mac; native x86 hardware should be faster.  gfortran builds run the band integrals serially and will be dramatically slower here — use ifx or flang.)
+
+To run inside the Intel docker container (built as `band` — see Docker / Apptainer images under [Building from source](#building-from-source)), mount the repository's `figures/` directory so the plot survives the container:
+
+```
+docker run --rm -v $(pwd)/figures:/app/figures band \
+    bash --login -c "conda activate band && python /app/test/python/test_chisquare_nr_simulator.py 100 64"
+```
+
+# Building from source
+
+Most users don't need this — see [Getting started](#getting-started-use-the-published-containers) for the published containers.  Build from source for local development, a compiler this project doesn't publish, or to reproduce an exact local/uncommitted state.
+
+## Fortran Package Manager (`fpm`)
+
+This project uses the Fortran Package Manager (fpm).  You'll need to install that to build this project; please see https://fpm.fortran-lang.org/install/index.html#install for instructions on installing fpm on your system.  Currently (Oct 2026), both building from source and installing via `conda` get the same version, 0.13.0.
+
+Before `fpm build`/`fpm test`, generate `src/version.f90.inc` (not committed — `src/PpqFort_m.f90` `include`s it, so the build fails loudly if you skip this rather than silently reporting a stale version):
+
+```
+python scripts/generate_version_include.py
+```
+
+Every Dockerfile in this repo runs this automatically; it's only a manual step for a local, non-container build. `PpqFort_version()` then reports exactly `fpm.toml`'s `version` field — there is no second copy to keep in sync by hand.
+
+The code parallelizes its integration loops with `do concurrent` using locality specifiers, including the Fortran 2023 `reduce` clause, so you need a recent compiler.  The versions below have been verified via the docker containers in this repository:
+
+|Vendor| Version(s)      |  Build/Test Command                                                                                                                        |
+|------|-----------------|--------------------------------------------------------------------------------------------------------------------------------------------|
+|GNU   | 15.2.0          | `fpm test --compiler gfortran --profile release --flag "-march=native -fopenmp -ftree-parallelize-loops=4 -fcoarray=single -fPIC"`         |
+|Intel | 2025.2.1        | `fpm test --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release`                                        |
+|LLVM  | 22              | `fpm test --compiler flang --profile release --flag "-O3 -fopenmp -fdo-concurrent-to-openmp=host"`                                         |
+
+Notes:
+* GNU: gfortran is slow.  It has no option for mapping `do concurrent` onto threads (the auto-parallelizer in `-ftree-parallelize-loops` cannot parallelize these loops because they contain function calls), so the band integrals run **serially** in gfortran builds — measured at 1.0 effective threads vs 17.6 for ifx on the same machine, making per-event likelihood evaluation ~25x slower there (roughly the core count times a ~1.5x per-core gap from the vector math library).  The gfortran build is fine for verifying the physics and the Python interface, but use ifx or flang for production likelihood work (MCMC).
+* Intel: the shared library must also be linked against the Intel OpenMP runtime for the Python ctypes interface to work; the Intel container does this by setting `FPM_LDFLAGS="-liomp5"`.  The `-fpp -DHAVE_MULTI_IMAGE_SUPPORT=0` flags are for the Julienne dependency.  `-qopenmp` maps `do concurrent` onto the OpenMP thread pool.
+* LLVM: the compiler is invoked as `flang`.  `-fdo-concurrent-to-openmp=host` is what parallelizes the `do concurrent` loops; without it they compile to serial loops.  The LLVM container sets `FPM_LDFLAGS="-fopenmp"` so the shared library links against `libomp`.  Intel and LLVM builds benchmark identically (~6 us per event in vector mode on 18 emulated cores).
+
+## Shared library for the python interface
+The python wrappers load `lib/libband_distribution.so`, which `fpm install` builds and places under the repository root.  Use the same flags as the test commands above; for Intel and LLVM, `FPM_LDFLAGS` must also be set so the *shared library* links its OpenMP runtime — without it the library builds but fails to load from python with undefined `__kmpc_*` symbols:
+
+```
+# Intel
+FPM_LDFLAGS="-liomp5" fpm install --prefix=. --compiler ifx --profile release --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0"
+
+# LLVM
+FPM_LDFLAGS="-fopenmp" fpm install --prefix=. --compiler flang --profile release --flag "-O3 -fopenmp -fdo-concurrent-to-openmp=host"
+
+# GNU (verification only — see the notes above)
+fpm install --prefix=. --compiler gfortran --profile release --flag "-march=native -fopenmp -ftree-parallelize-loops=4 -fcoarray=single -fPIC"
+```
+
+## Docker / Apptainer images
+
+There are multiple Dockerfiles, each building the code with a compiler from a different vendor (GNU, Intel, and LLVM).
 
 |Vendor| Dockerfile name     | Notes |
 |------|---------------------|-------|
 |GNU   | Dockerfile_gfortran | Slow: gfortran runs the band integrals serially, ~25x slower than ifx/flang (see the compiler notes above) |
 |Intel | Dockerfile_intel    | Recommended for work that needs speed |
 |LLVM  | Dockerfile_llvm     | Same performance as the Intel build; preferred for any image meant to be published, since `environment.yaml` never installs Intel's ifx unless a Dockerfile explicitly adds it (`Dockerfile_intel`/`_tau_intel` do, via `conda install -n band ifx_linux-64` after the shared environment is created) |
-
-**Most users don't need to build anything.** The LLVM image is published to GitHub's container registry (no Intel binaries, no license question, and no Docker install needed on the machine that runs it):
-
-```
-docker pull ghcr.io/det-lab/band_distribution_llvm:v1.1.4
-```
-
-or, directly to a `.sif` for HPC — this is what `slurm/pull_container.job` does:
-
-```
-apptainer build band.sif docker://ghcr.io/det-lab/band_distribution_llvm:v1.1.4
-```
-
-Replace `v1.1.4` with any other release tag (see [releases](https://github.com/det-lab/band_distribution/releases) or `git tag -l`), or `latest` for the newest. Building locally (below) is for development, a compiler this project doesn't publish, or reproducing an exact local/uncommitted state.
 
 Choose which compiler you want, determine the name of the dockerfile, and then issue the following command:
 
@@ -326,35 +357,24 @@ Now you have a docker container that contains the fortran binary, but this is no
 apptainer build band.sif docker-daemon://band:latest
 ```
 
-# Build the docker container for running Jupyter and interacting with notebooks
-
-This image is also published — `docker pull ghcr.io/det-lab/band_distribution_jupyter:v1.1.4` skips the build entirely. To build it yourself instead:
+## Jupyter image
 
 ```
 docker build --rm -f Dockerfile_jupyter -t band_jupyter .
 ```
 
-## Run the jupyter container
-You can issue this command from any directory.  Note the absolute path names for mounting the volume.  This enables your work to persist!  You will need to replace `/mnt/c/Users/canto/Repositories/nrFanoII` with the path to your repository directory.  You should leave `home/jovyan/work/nrFano` the same.  Note that this command refers to the nrFanoII repository, which uses this (band_distribution) repository.
-
-```
-docker run -it --rm -p 8888:8888 -v /mnt/c/Users/canto/Repositories/nrFanoII:/home/jovyan/work/nrFano ghcr.io/det-lab/band_distribution_jupyter:v1.1.4
-```
-
-(use `band_jupyter:latest` in place of the `ghcr.io` tag if you built it yourself above)
-
-In notebooks, select the **Python (band)** kernel — it runs in the `band` conda environment (built from `environment.yaml`, the same environment used by the other containers), which has the compiled library's runtime dependencies and all the python packages.
+Run it the same way as the published image (see [Getting started](#getting-started-use-the-published-containers)), using `band_jupyter:latest` in place of the `ghcr.io` tag.
 
 This image compiles with flang (LLVM), like `Dockerfile_llvm`, not ifx: it is meant to be publishable, and `environment.yaml` never installs Intel's ifx unless a Dockerfile explicitly adds it on top (see the compiler table above) — avoiding the Intel-redistribution question entirely, the same reasoning that picked LLVM over Intel for the HPC container.
 
-# Use the docker container for local development
+## Local development container
 For local development, you most likely want the files available to you in a way that persists once you close the container.  In this case you need to supply arguments to `docker run` that mount the top-level directory:
 
 ```
 docker run -it --mount type=bind,src=.,dst=/app --entrypoint=/bin/bash band
 ```
 
-# Profiling with TAU
+## Profiling with TAU
 Maintainer workflow for profiling the Fortran library itself, not needed to use the library for a fit or MCMC — see [docs/PROFILING.md](docs/PROFILING.md).
 
 # Documentation
