@@ -358,13 +358,13 @@ docker run -it --mount type=bind,src=.,dst=/app --entrypoint=/bin/bash band
 ```
 
 # Profiling with TAU
-TAU is built into `Dockerfile_tau_intel`. This image uses the ifx compiler because that comipler is the easiest to install outside a Docker container.  Build that image first:
+TAU is built into `Dockerfile_tau_intel`. This image uses the ifx compiler because that compiler is the easiest to install outside a Docker container.  Build that image first:
 
 ```
 docker build -f Dockerfile_tau_intel -t tau_intel .
 ```
 
-Once the image is built, you can run the container and shell into it with. The repository is mounted at `/repo` so that any changes to files persist on the host. The built library remains at `/app`.
+Once the image is built, you can run the container and shell into it with the command below. The repository is mounted at `/repo` so that any changes to files persist on the host. The built library remains at `/app`.
 
 ```
 # for fish shell
