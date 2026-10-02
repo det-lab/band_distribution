@@ -169,17 +169,14 @@ fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
 # test_region_integral.py, including a 247 keV-wide region.
 
 def loglike(k, Z, F0, eps, V, p0, p10, q0, q10):
-    vals = fit.ppqn_values(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
-    norm = fit.ppqn_integral(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
-    return np.sum(np.log(vals / norm))
-    # vals/norm is the normalized PDF at each event; equivalently,
-    # fit.ppqn_normalized_values(...) does this division for you
+    normalized = fit.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
+    return np.sum(np.log(normalized))
 
 # e.g. loglike(k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0,
 #              p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
 ```
 
-Same shape for the ER band (`ppqg_integral`/`ppqg_values`/`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there). Build `fit` once, outside the fit loop; call its methods once per step, inside.
+Same shape for the ER band (`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there — also `ppqg_values`/`ppqg_integral` if you want the unnormalized value and the normalization separately). Build `fit` once, outside the fit loop; call its methods once per step, inside.
 
 # Precomputed normalization tables for MCMC: `python/normgrid.py`
 
