@@ -126,10 +126,10 @@ LD_LIBRARY_PATH=lib python test/python/test_chisquare_er_simulator.py 10000    #
 
 (Timings measured with the ifx build, 18 workers, under x86 emulation on an Apple Silicon Mac; native x86 hardware should be faster.  gfortran builds run the band integrals serially and will be dramatically slower here — use ifx or flang.)
 
-To run inside the Intel docker container, mount the repository's `figures/` directory so the plot survives the container:
+To run inside the Intel docker container (built as `band` — see "Build the singularity/apptainer container" below), mount the repository's `figures/` directory so the plot survives the container:
 
 ```
-docker run --rm -v $(pwd)/figures:/app/figures band_distribution_intel \
+docker run --rm -v $(pwd)/figures:/app/figures band \
     bash --login -c "conda activate band && python /app/test/python/test_chisquare_nr_simulator.py 100 64"
 ```
 
@@ -193,8 +193,8 @@ A few design points worth knowing:
 ```
 # describe the grid (region and epsrel are required; nodes default to RECOMMENDED_NODES
 # and the box to the one above -- a wrong region makes a table that looks fine and isn't)
-python python/normgrid.py make-spec --band NR --region 2 200 4 100 --epsrel 1e-7 --out spec_NR.json
-python python/normgrid.py make-random-spec --band NR --n 200 --region 2 200 4 100 --epsrel 1e-7 --out held_NR.json
+python python/normgrid.py make-spec --band NR --region 2.5 350 0.75 200 --epsrel 1e-7 --out spec_NR.json
+python python/normgrid.py make-random-spec --band NR --n 200 --region 2.5 350 0.75 200 --epsrel 1e-7 --out held_NR.json
 
 # run it: on one machine, or as batch jobs (osg/normgrid.sub + osg/normgrid_job.sh are an HTCondor template)
 python python/normgrid.py chunks spec_NR.json --size 100        # "start stop" ranges, one per job
@@ -294,16 +294,16 @@ There are multiple Dockerfiles, each building the code with a compiler from a di
 **Most users don't need to build anything.** The LLVM image is published to GitHub's container registry (no Intel binaries, no license question, and no Docker install needed on the machine that runs it):
 
 ```
-docker pull ghcr.io/det-lab/band_distribution_llvm:v1.1.3
+docker pull ghcr.io/det-lab/band_distribution_llvm:v1.1.4
 ```
 
 or, directly to a `.sif` for HPC — this is what `slurm/pull_container.job` does:
 
 ```
-apptainer build band.sif docker://ghcr.io/det-lab/band_distribution_llvm:v1.1.3
+apptainer build band.sif docker://ghcr.io/det-lab/band_distribution_llvm:v1.1.4
 ```
 
-Replace `v1.1.3` with any other release tag (see [releases](https://github.com/det-lab/band_distribution/releases) or `git tag -l`), or `latest` for the newest. Building locally (below) is for development, a compiler this project doesn't publish, or reproducing an exact local/uncommitted state.
+Replace `v1.1.4` with any other release tag (see [releases](https://github.com/det-lab/band_distribution/releases) or `git tag -l`), or `latest` for the newest. Building locally (below) is for development, a compiler this project doesn't publish, or reproducing an exact local/uncommitted state.
 
 Choose which compiler you want, determine the name of the dockerfile, and then issue the following command:
 
@@ -333,7 +333,7 @@ apptainer build band.sif docker-daemon://band:latest
 
 # Build the docker container for running Jupyter and interacting with notebooks
 
-This image is also published — `docker pull ghcr.io/det-lab/band_distribution_jupyter:v1.1.3` skips the build entirely. To build it yourself instead:
+This image is also published — `docker pull ghcr.io/det-lab/band_distribution_jupyter:v1.1.4` skips the build entirely. To build it yourself instead:
 
 ```
 docker build --rm -f Dockerfile_jupyter -t band_jupyter .
@@ -343,7 +343,7 @@ docker build --rm -f Dockerfile_jupyter -t band_jupyter .
 You can issue this command from any directory.  Note the absolute path names for mounting the volume.  This enables your work to persist!  You will need to replace `/mnt/c/Users/canto/Repositories/nrFanoII` with the path to your repository directory.  You should leave `home/jovyan/work/nrFano` the same.  Note that this command refers to the nrFanoII repository, which uses this (band_distribution) repository.
 
 ```
-docker run -it --rm -p 8888:8888 -v /mnt/c/Users/canto/Repositories/nrFanoII:/home/jovyan/work/nrFano ghcr.io/det-lab/band_distribution_jupyter:v1.1.3
+docker run -it --rm -p 8888:8888 -v /mnt/c/Users/canto/Repositories/nrFanoII:/home/jovyan/work/nrFano ghcr.io/det-lab/band_distribution_jupyter:v1.1.4
 ```
 
 (use `band_jupyter:latest` in place of the `ghcr.io` tag if you built it yourself above)
@@ -422,6 +422,7 @@ If you edit source files in `/repo` and want to re-profile, rebuild the library 
 **Step 1: Rebuild the library**
 ```
 cd /repo
+python scripts/generate_version_include.py   # src/version.f90.inc is gitignored; fpm needs it generated first
 fpm install --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release --prefix /tmp/band_new
 ```
 
