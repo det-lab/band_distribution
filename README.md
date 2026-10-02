@@ -53,11 +53,13 @@ import sys
 sys.path.insert(0, "python")
 from ppq_pdf import PpqPDF
 
-# ep_min, ep_max, eq_min, eq_max: your analysis region (ROI) in keV -- the
-# same (Ep, Eq) window your data is already cut to.  2.5-350 / 0.75-200 is
-# this project's region; use YOUR actual cut, not this one, unless it
-# happens to match.  ep_data, eq_data: your measured events, also in keV.
-fit = PpqPDF(2.5, 350.0, 0.75, 200.0, ep_data, eq_data,
+# define the data region: your analysis ROI in keV -- the same (Ep, Eq)
+# window your data is already cut to.  2.5-350 / 0.75-200 is this project's
+# region; use YOUR actual cut, not this one, unless it happens to match.
+ep_min, ep_max = 2.5, 350.0
+eq_min, eq_max = 0.75, 200.0
+
+fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,  # ep_data/eq_data: your measured events, keV
              norm_epsrel=1e-4, norm_epsabs=1e-10)
 normalized = fit.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0,
                                          p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
@@ -149,12 +151,15 @@ sys.path.insert(0, "python")  # or wherever your checkout's python/ dir lives
 import numpy as np
 from ppq_pdf import PpqPDF
 
-# ep_min, ep_max, eq_min, eq_max: your analysis region (ROI) in keV -- the
-# window your data (ep_data, eq_data, also keV) is already cut to.  This is
-# the box the normalization integral is computed over, so it must be your
-# real cut, not an arbitrary wide range; 2.5-350 / 0.75-200 below is this
-# project's region, not a universal default.
-fit = PpqPDF(2.5, 350.0, 0.75, 200.0, ep_data, eq_data,
+# define the data region: your analysis ROI in keV, the window your data
+# (ep_data, eq_data, also keV) is already cut to.  This is the box the
+# normalization integral is computed over, so it must be your real cut,
+# not an arbitrary wide range; 2.5-350 / 0.75-200 below is this project's
+# region, not a universal default.
+ep_min, ep_max = 2.5, 350.0
+eq_min, eq_max = 0.75, 200.0
+
+fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
              norm_epsrel=1e-4, norm_epsabs=1e-10)
 # norm_epsrel/norm_epsabs set how tightly two successive doubled
 # quadrature orders must agree before the normalization integral is
@@ -215,7 +220,11 @@ Each Slurm stage is `sbatch --wait slurm/normgrid.sbatch ...`, so `slurm/build_t
 `run` is resumable and crash-tolerant: Fortran `error stop` (e.g. the quadrature not certifying `epsrel=1e-7`) kills the process, so a supervisor records that point as `nan` and restarts past it; re-run failures with a looser tolerance via `run --retry-failed --epsrel 1e-6`.  `merge` refuses to build a table with missing points.  The HDF5 file records the region, fixed parameters, library version and git commit it was built with — rebuild if any of those change.  (`h5py` is in `environment.yaml`.)  Then hand the tables to `PpqPDF`; nothing else in the fit changes:
 
 ```python
-fit = PpqPDF(2.5, 350.0, 0.75, 200.0, ep_data, eq_data,          # same region the tables were built for
+# define the data region: must match what the tables were built for exactly
+ep_min, ep_max = 2.5, 350.0
+eq_min, eq_max = 0.75, 200.0
+
+fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
              ppqn_table="norm_NR.h5", ppqg_table="norm_ER.h5")
 # fit.ppqn_integral(...) / fit.ppqg_integral(...) now interpolate instead of integrating
 ```
@@ -241,7 +250,11 @@ BOUNDS = {"V": (2.7, 3.3), "p0": (0.0129, 0.1155), "p10": (0.3, 0.6),
           "NR": {"k": (0.13, 0.22), "F0": (1e-5, 1.0)},
           "ER": {"F0": (0.1, 0.35)}}
 
-pdf = PpqPDF(2.5, 350, 0.75, 200, ep_data, eq_data,
+# define the data region: must match the named tables below exactly
+ep_min, ep_max = 2.5, 350.0
+eq_min, eq_max = 0.75, 200.0
+
+pdf = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
              ppqn_table="NR_ep2.5-350_eq0.75-200", ppqg_table="ER_ep2.5-350_eq0.75-200",
              prior_bounds=BOUNDS)                  # 1. fails now, not hours into the run
 
