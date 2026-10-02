@@ -53,13 +53,17 @@ import sys
 sys.path.insert(0, "python")
 from ppq_pdf import PpqPDF
 
-fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+# ep_min, ep_max, eq_min, eq_max: your analysis region (ROI) in keV -- the
+# same (Ep, Eq) window your data is already cut to.  2.5-350 / 0.75-200 is
+# this project's region; use YOUR actual cut, not this one, unless it
+# happens to match.  ep_data, eq_data: your measured events, also in keV.
+fit = PpqPDF(2.5, 350.0, 0.75, 200.0, ep_data, eq_data,
              norm_epsrel=1e-4, norm_epsabs=1e-10)
-normalized = fit.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V,
-                                         p0=p0, p10=p10, q0=q0, q10=q10)
+normalized = fit.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0,
+                                         p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
 ```
 
-`ep_min, ep_max, eq_min, eq_max` are your analysis region (ROI) in keV — the same (Ep, Eq) window your data is already cut to; `fit.ppqn_integral`/`ppqg_integral` normalize over exactly that box, so it has to be the real cut, not an arbitrary wide range.  If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below), this region must match the one the table was built for exactly — `PpqPDF` checks this at construction and raises if it doesn't.
+The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below), this region must match the one the table was built for exactly — `PpqPDF` checks this at construction and raises if it doesn't.
 
 See "Normalizing a likelihood fit to a region" below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `_ppqfort_bindings.py` (the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API), `normgrid.py`'s table machinery, `pq_dist_v10.py`'s pure-Python reference implementation — is infrastructure, not a second way to use the library.  The sections below (testing, performance) are for verifying and maintaining the library itself; skip to "Normalizing a likelihood fit to a region" if you just want to use it.
 
@@ -145,7 +149,12 @@ sys.path.insert(0, "python")  # or wherever your checkout's python/ dir lives
 import numpy as np
 from ppq_pdf import PpqPDF
 
-fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+# ep_min, ep_max, eq_min, eq_max: your analysis region (ROI) in keV -- the
+# window your data (ep_data, eq_data, also keV) is already cut to.  This is
+# the box the normalization integral is computed over, so it must be your
+# real cut, not an arbitrary wide range; 2.5-350 / 0.75-200 below is this
+# project's region, not a universal default.
+fit = PpqPDF(2.5, 350.0, 0.75, 200.0, ep_data, eq_data,
              norm_epsrel=1e-4, norm_epsabs=1e-10)
 # norm_epsrel/norm_epsabs set how tightly two successive doubled
 # quadrature orders must agree before the normalization integral is
@@ -159,6 +168,9 @@ def loglike(k, Z, F0, eps, V, p0, p10, q0, q10):
     norm = fit.ppqn_integral(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
     return np.sum(np.log(vals)) - len(fit.ep_data) * np.log(norm)
     # or fit.ppqn_normalized_values(...) if you want vals/norm directly
+
+# e.g. loglike(k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0,
+#              p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
 ```
 
 Same shape for the ER band (`ppqg_integral`/`ppqg_values`/`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there). Build `fit` once, outside the fit loop; call its methods once per step, inside.
@@ -203,8 +215,8 @@ Each Slurm stage is `sbatch --wait slurm/normgrid.sbatch ...`, so `slurm/build_t
 `run` is resumable and crash-tolerant: Fortran `error stop` (e.g. the quadrature not certifying `epsrel=1e-7`) kills the process, so a supervisor records that point as `nan` and restarts past it; re-run failures with a looser tolerance via `run --retry-failed --epsrel 1e-6`.  `merge` refuses to build a table with missing points.  The HDF5 file records the region, fixed parameters, library version and git commit it was built with — rebuild if any of those change.  (`h5py` is in `environment.yaml`.)  Then hand the tables to `PpqPDF`; nothing else in the fit changes:
 
 ```python
-fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
-             ppqn_table="norm_NR.h5", ppqg_table="norm_ER.h5")   # region must match the tables
+fit = PpqPDF(2.5, 350.0, 0.75, 200.0, ep_data, eq_data,          # same region the tables were built for
+             ppqn_table="norm_NR.h5", ppqg_table="norm_ER.h5")
 # fit.ppqn_integral(...) / fit.ppqg_integral(...) now interpolate instead of integrating
 ```
 
