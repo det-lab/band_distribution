@@ -7,7 +7,7 @@ Citation metadata for the code is in `CITATION.cff` (GitHub's "Cite this reposit
 
 # Building and testing with the Fortran Package Manager (`fpm`)
 
-This project uses the Fortran Package Manager (fpm).  You'll need to install that to build this project; please see https://fpm.fortran-lang.org/install/index.html#install for instructions on installing fpm on your system.  Currently (Nov 2025), building from source will install version 0.14 while installing the package via e.g. `conda` will install version 0.12.
+This project uses the Fortran Package Manager (fpm).  You'll need to install that to build this project; please see https://fpm.fortran-lang.org/install/index.html#install for instructions on installing fpm on your system.  Currently (Oct 2026), both building from source and installing via `conda` get the same version, 0.13.0.
 
 Before `fpm build`/`fpm test`, generate `src/version.f90.inc` (not committed — `src/PpqFort_m.f90` `include`s it, so the build fails loudly if you skip this rather than silently reporting a stale version):
 
@@ -65,7 +65,7 @@ normalized = band_pdf.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-
                                              p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
 ```
 
-The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below), this region must match the one the table was built for exactly — `PpqPDF` checks this at construction and raises if it doesn't.
+The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  **If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below) and your region doesn't match the one a table was built for exactly, `PpqPDF` raises at construction rather than silently normalizing wrong.**  The fix is to build a new table for your region — see [Precomputed normalization tables for MCMC](#precomputed-normalization-tables-for-mcmc-pythonnormgridpy), in particular "One command for a whole table" below.
 
 See "Normalizing a likelihood fit to a region" below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `_ppqfort_bindings.py` (the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API), `normgrid.py`'s table machinery, `pq_dist_v10.py`'s pure-Python reference implementation — is infrastructure, not a second way to use the library.  The sections below (testing, performance) are for verifying and maintaining the library itself; skip to "Normalizing a likelihood fit to a region" if you just want to use it.
 
@@ -143,7 +143,7 @@ docker run --rm -v $(pwd)/figures:/app/figures band \
 
 A likelihood fit needs the *un-normalized* PDF at each data point and the PDF's integral over the fit region (to normalize it) — both re-evaluated at every step as the fit/MCMC explores parameter space.  Computing that normalization with `scipy.integrate.quad` is several seconds per call (it evaluates the PDF one point at a time, at the ~3-25 ms/point *scalar* cost — see `python/_ppqfort_bindings.py`'s docstring); `python/ppq_pdf.py`'s `PpqPDF` instead uses a doubling-verified nested Gauss-Legendre quadrature evaluated in one batched, thread-parallel call (`PpqN_region`/`PpqG_region` in Fortran — the ridge location/width is already known exactly, same physics as `test/python/band_breakpoints.py`'s ridge/width derivation, so it needs far fewer points than a naive grid for the same accuracy), landing well under a second per call even for a wide region under `ifx`/`flang`.
 
-`PpqPDF` bundles the things that *don't* change across a fit/MCMC run — the region, the observed dataset, and the normalization quadrature's convergence tolerance — at construction, so every subsequent call only needs the physics parameters that the fit is actually varying.  The region is `ep_min, ep_max, eq_min, eq_max`: the (Ep, Eq) analysis window in keV that your data is cut to, and the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  If you later add precomputed tables (`ppqn_table=`/`ppqg_table=`), this region must match the one the table was built for exactly; `PpqPDF` checks that at construction and raises if it doesn't:
+`PpqPDF` bundles the things that *don't* change across a fit/MCMC run — the region, the observed dataset, and the normalization quadrature's convergence tolerance — at construction, so every subsequent call only needs the physics parameters that the fit is actually varying.  The region is `ep_min, ep_max, eq_min, eq_max`: the (Ep, Eq) analysis window in keV that your data is cut to, and the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  If you later add precomputed tables (`ppqn_table=`/`ppqg_table=`), this region must match the one the table was built for exactly; `PpqPDF` checks that at construction and raises if it doesn't — build a new table for your region instead (below) rather than widening the region to fit an existing one:
 
 ```python
 import sys
@@ -358,100 +358,7 @@ docker run -it --mount type=bind,src=.,dst=/app --entrypoint=/bin/bash band
 ```
 
 # Profiling with TAU
-TAU is built into `Dockerfile_tau_intel`. This image uses the ifx compiler because that compiler is the easiest to install outside a Docker container.  Build that image first:
-
-```
-docker build -f Dockerfile_tau_intel -t tau_intel .
-```
-
-Once the image is built, you can run the container and shell into it with the command below. The repository is mounted at `/repo` so that any changes to files persist on the host. The built library remains at `/app`.
-
-```
-# for fish shell
-docker run -it -v /tmp/.X11-unix:/tmp/.X11-unix -v "$XAUTH/.Xauthority:/root/.Xauthority" -v $PWD:/repo tau_intel /bin/bash
-
-# for bash shell
-docker run -it -v /tmp/.X11-unix:/tmp/.X11-unix -v "$XAUTH/.Xauthority:/root/.Xauthority" -v ($pwd):/repo tau_intel /bin/bash
-```
-
-Inside the docker prompt, you'll need to set the DISPLAY environment variable.  After this, tools that require a GUI window like `paraprof` will work.
-
-```
-export DISPLAY=:0.0
-```
-
-Set the TAU environment variables:
-
-```
-export TAU_MAKEFILE=/packages/tau2/x86_64/lib/Makefile.tau-pthread
-export TAU_OPTIONS="-optCompInst -optVerbose -optNoRevert"
-export TAU_THROTTLE=0
-```
-
-Compile the profiling driver using `tau_f90.sh`, which instruments every Fortran source file.
-The module and submodule must be compiled before the driver (the `-c` step generates the `.mod` files needed downstream):
-
-```
-cd /tmp
-
-tau_f90.sh -O3 -g -qopenmp -fpp -I/app/include -c /app/src/PpqFort_m.f90
-tau_f90.sh -O3 -g -qopenmp -fpp -I/app/include -c /app/src/PpqFort_s.f90
-
-tau_f90.sh -O3 -g -qopenmp -fpp \
-    -I/app/include \
-    PpqFort_m.o PpqFort_s.o /repo/app/profile_driver.f90 \
-    -L/app/lib -lband_distribution \
-    -Wl,-rpath,/app/lib \
-    -o /repo/profile_driver
-```
-
-Run the instrumented binary directly (no `tau_exec` needed with compiler instrumentation):
-
-```
-/repo/profile_driver
-```
-
-Running the code will produce `profile.*` files in the current directory (`/tmp` if you followed the steps above), which you can investigate using `pprof` (terminal summary) or `paraprof` (GUI view).
-
-## Re-profiling after a source change
-
-If you edit source files in `/repo` and want to re-profile, rebuild the library from `/repo` first, then recompile the profile driver against the new library.
-
-**Step 1: Rebuild the library**
-```
-cd /repo
-python scripts/generate_version_include.py   # src/version.f90.inc is gitignored; fpm needs it generated first
-fpm install --compiler ifx --flag "-fpp -O3 -qopenmp -DHAVE_MULTI_IMAGE_SUPPORT=0" --profile release --prefix /tmp/band_new
-```
-
-**Step 2: Add the dependency libraries to `LD_LIBRARY_PATH`**
-
-`fpm install` copies the main library but not its dependencies (`libassert.so`, `libjulienne.so`). Point the linker at the fpm build directory:
-```
-export LD_LIBRARY_PATH=$(find /repo/build -name "libassert.so" -printf "%h\n" | head -1):$LD_LIBRARY_PATH
-export LD_LIBRARY_PATH=$(find /repo/build -name "libjulienne.so" -printf "%h\n" | head -1):$LD_LIBRARY_PATH
-```
-
-**Step 3: Recompile the profile driver with TAU instrumentation**
-```
-cd /tmp
-
-tau_f90.sh -O3 -g -qopenmp -fpp -I/tmp/band_new/include -c /repo/src/PpqFort_m.f90
-tau_f90.sh -O3 -g -qopenmp -fpp -I/tmp/band_new/include -c /repo/src/PpqFort_s.f90
-
-tau_f90.sh -O3 -g -qopenmp -fpp \
-    -I/tmp/band_new/include \
-    PpqFort_m.o PpqFort_s.o /repo/app/profile_driver.f90 \
-    -L/tmp/band_new/lib -lband_distribution \
-    -Wl,-rpath,/tmp/band_new/lib \
-    -o /repo/profile_driver
-```
-
-**Step 4: Run and inspect**
-```
-/repo/profile_driver
-pprof
-```
+Maintainer workflow for profiling the Fortran library itself, not needed to use the library for a fit or MCMC — see [docs/PROFILING.md](docs/PROFILING.md).
 
 # Documentation
 With [ford](https://github.com/Fortran-FOSS-Programmers/ford) installed, run `ford ford.md`.
