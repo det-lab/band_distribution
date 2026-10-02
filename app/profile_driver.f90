@@ -11,8 +11,8 @@ program profile_driver
   real(c_double), parameter :: V   = 3.0d0
   real(c_double), parameter :: p0  = 0.06421907d0
   real(c_double), parameter :: p10 = 0.48998486d0
-  real(c_double), parameter :: q0  = 0.06421907d0
-  real(c_double), parameter :: q10 = 0.48998486d0
+  real(c_double), parameter :: q0  = 0.23718488d0
+  real(c_double), parameter :: q10 = 0.27093151d0
 
   integer, parameter :: npts = 100
   integer(c_int), parameter :: n = int(npts, c_int)
