@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15, macos-15-intel, ubuntu-24.04]
+        os: [macos-26, macos-15, macos-15-intel, ubuntu-24.04]
         compiler: [ gfortran ]
         version: [ 15 ]
         extra_flags: [ -g -O3 ]
@@ -28,16 +28,17 @@ jobs:
         include:
           # --- LLVM flang coverage ---
 
-          # macos-14 and macos-15-intel are deliberately NOT covered here:
-          # Homebrew ships no llvm/flang bottle for either (macos-14: "Homebrew
-          # no longer builds bottles for this configuration" -- it's aged out
-          # of support; macos-15-intel: flang is a Tier 3 Homebrew formula and
-          # Intel bottles for it are unreliable), so `brew install flang`
-          # compiles LLVM + flang from source on both, ~4 hours, every run --
-          # not a flake, reproduced and timed via the GitHub API. gfortran
-          # still covers both above (it has stable bottles everywhere). This
-          # macos-15 (Apple Silicon) entry already gives real flang-on-macOS
-          # signal, with a working bottle, in a couple of minutes.
+          # macos-15-intel is deliberately NOT covered here: flang is a Tier 3
+          # Homebrew formula there and Intel bottles for it are unreliable, so
+          # `brew install flang` compiles LLVM + flang from source, ~4 hours,
+          # every run -- not a flake, reproduced and timed via the GitHub API.
+          # gfortran still covers it above (it has a stable bottle everywhere).
+          # macos-26 (Apple Silicon) isn't covered here either, pending
+          # confirmation Homebrew has a flang bottle for it yet -- it only
+          # replaced the deprecated macos-14 runner in the gfortran-only list
+          # above, same reasoning as macos-14 before it. The macos-15 (Apple
+          # Silicon) entry below already gives real flang-on-macOS signal,
+          # with a working bottle, in a couple of minutes.
           - os: macos-15
             compiler: flang
             version: 21
@@ -53,6 +54,10 @@ jobs:
             container: snowstep/llvm:jammy
 
           # https://hub.docker.com/r/phhargrove/llvm-flang/tags
+          - os: ubuntu-24.04
+            compiler: flang
+            version: 22
+            container: phhargrove/llvm-flang:22.1.3-latest
           - os: ubuntu-24.04
             compiler: flang
             version: 21
