@@ -11,8 +11,6 @@ Most users don't need to build anything from source.  Pull a container, then ski
 
 ## The LLVM container (library, HPC)
 
-No Intel binaries, no license question, and no compiler needed on the machine that runs it:
-
 ```
 docker pull ghcr.io/det-lab/band_distribution_llvm:v1.1.4
 ```
