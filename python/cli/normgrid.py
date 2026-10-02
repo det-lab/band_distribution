@@ -37,8 +37,8 @@ built and evaluated with numpy.polynomial.chebyshev (chebfit/chebval), exact
 at the nodes; N nodes on an axis means a degree N-1 polynomial along it.  It never extrapolates: a query outside the
 table's box raises OutOfBoxError.
 
-Usage:  python normgrid.py --help   (run with LD_LIBRARY_PATH=lib so the
-Fortran library loads, as with the other python/ entry points)
+Usage:  python python/cli/normgrid.py --help   (run with LD_LIBRARY_PATH=lib so the
+Fortran library loads, as with the other python/cli/ entry points)
 """
 
 import argparse
@@ -52,6 +52,10 @@ import time
 
 import numpy as np
 from numpy.polynomial import chebyshev as cheb
+
+# _ppqfort_bindings.py is a sibling package, not a sibling file, now that the
+# CLI tools and the private ctypes layer live in their own subdirectories.
+_INTERNAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "internal")
 
 AXES = ("k", "F0", "V", "p0", "dp", "q0", "dq")
 BAND_AXES = {"NR": AXES, "ER": tuple(a for a in AXES if a != "k")}
@@ -114,7 +118,7 @@ def x10_ranges(box):
 # extrapolation -- check it with `validate`.  (For the earlier 2-200 / 4-100
 # region q0 needed only 5 nodes.)  One-axis-at-a-time studies cannot see
 # cross terms, so validate any table against held-out points.  For another
-# region do not reuse these: slurm/build_table.sh (python/normplan.py) measures
+# region do not reuse these: slurm/build_table.sh (python/cli/normplan.py) measures
 # the counts for the region it is given -- it reproduces the NR counts below
 # and the ER ones to within a node.
 RECOMMENDED_NODES = {
@@ -278,7 +282,7 @@ def _evaluate(spec, params, epsrel):
         return math.exp(3 * u["V"] + 6 * u["q0"]) * (1 + 0.05 * sum(v for a, v in u.items() if a not in ("V", "q0")))
     if fake:
         return 1.0 + sum(params[k] * (i + 1) for i, k in enumerate(sorted(params))) * 1e-3
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, _INTERNAL_DIR)
     from _ppqfort_bindings import ppqg_region, ppqn_region
     fn = ppqn_region if spec["band"] == "NR" else ppqg_region
     return fn(*spec["region"], epsrel=epsrel, epsabs=spec["epsabs"], **params)
@@ -403,7 +407,7 @@ def merge(spec_path, result_paths, out_path, allow_missing=False):
     shape = grid_shape(spec)
     lib_version = ""
     try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, _INTERNAL_DIR)
         import _ppqfort_bindings
         lib_version = ".".join(map(str, _ppqfort_bindings.version()))
     except Exception:

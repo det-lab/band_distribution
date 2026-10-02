@@ -5,7 +5,7 @@ Uses chisquare_harness.run_chisquare_test (equibin bins, PDF-integrated
 expected counts, batched chi-square throws; see that module's
 docstring for the general workflow).  Specific to this test:
 
-- The PDF comes from lib/libband_distribution.so via python/_ppqfort_bindings.py
+- The PDF comes from lib/libband_distribution.so via python/internal/_ppqfort_bindings.py
   (threaded chunked PpqN_vector calls), unnormalized -- fine here since this
   test only checks the PDF's *shape* (sampled events vs. its own density),
   which a constant normalization factor doesn't affect.  For a fit or MCMC,
@@ -41,7 +41,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+sys.path.insert(0, str(REPO_ROOT / "python" / "internal"))
 import pq_dist_v10 as ppq
 import sample_from_pdf as spdf
 from band_breakpoints import make_ridge_breakpoints

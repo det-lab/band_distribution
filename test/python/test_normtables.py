@@ -1,5 +1,5 @@
 """
-Tests for python/normtables.py: register a table file, fetch it by name from a
+Tests for python/cli/normtables.py: register a table file, fetch it by name from a
 local HTTP server standing in for Zenodo, reuse the cache with no network,
 refuse a file whose hash does not match, and name the registered tables when
 asked for an unknown one.  Needs pooch; no Fortran, no network.
@@ -17,7 +17,7 @@ import tempfile
 import threading
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(REPO_ROOT, "python"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "python", "cli"))
 import normtables as nt
 
 failures = []

@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+sys.path.insert(0, str(REPO_ROOT / "python" / "internal"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from band_breakpoints import make_ridge_breakpoints

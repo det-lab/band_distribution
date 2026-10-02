@@ -9,7 +9,7 @@ entrypoint.  PpqPDF combines the pieces here (an UNNORMALIZED PDF and a
 separate region-normalization integral) correctly, raises instead of
 extrapolating when a precomputed table is used, and is what the rest of
 this file's docstrings assume you already have if you're reading them.
-This module exists for PpqPDF, python/normgrid.py, and the test suite
+This module exists for PpqPDF, python/cli/normgrid.py, and the test suite
 (which legitimately need the raw, unnormalized evaluation -- see each
 test's own comment) to build on.
 
@@ -36,7 +36,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# python/internal/ is two levels below the repo root now (it used to be one).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _LIB_DIR = os.path.join(_REPO_ROOT, "lib")
 
 _DOUBLE_ARR = np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS")

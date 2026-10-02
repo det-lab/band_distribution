@@ -14,7 +14,7 @@
 # Requires $BAND_SIF (default /scratch/$USER/containers/band.sif, as
 # produced by slurm/pull_container.job) built from *this* branch
 # (region_normalization) -- the container runs its own
-# /app/python/normgrid.py and needs PpqN_region/PpqG_region in /app/lib.
+# /app/python/cli/normgrid.py and needs PpqN_region/PpqG_region in /app/lib.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -36,7 +36,7 @@ mkdir -p logs results tables
 submit() {   # submit SPEC CHUNK_SIZE [extra sbatch args...]
     local spec=$1 size=$2; shift 2
     local n
-    n=$(python3 python/normgrid.py chunks "$spec" --size "$size" | wc -l)
+    n=$(python3 python/cli/normgrid.py chunks "$spec" --size "$size" | wc -l)
     echo -n "$(basename "$spec" .json): $n tasks -> "
     sbatch --account="$ACCOUNT" --partition="$PARTITION" --time="$TIME" \
            --array=0-$((n - 1))%"$THROTTLE" --job-name="ng_$(basename "$spec" .json)" \
@@ -56,10 +56,10 @@ cat <<EOF
 When the arrays finish (squeue -u \$USER), build and check the tables:
 
   for b in NR ER; do
-    python3 python/normgrid.py merge --spec specs/spec_\$b.json \\
+    python3 python/cli/normgrid.py merge --spec specs/spec_\$b.json \\
         --results "results/res_spec_\${b}_*.txt" \\
         --out tables/norm_\${b}_ep2.5-350_eq0.75-200.h5
-    python3 python/normgrid.py validate --table tables/norm_\${b}_ep2.5-350_eq0.75-200.h5 \\
+    python3 python/cli/normgrid.py validate --table tables/norm_\${b}_ep2.5-350_eq0.75-200.h5 \\
         --heldout-spec specs/held_\$b.json --results "results/res_held_\${b}_*.txt"
   done
 

@@ -106,8 +106,8 @@ RUN LD_LIBRARY_PATH="" fpm test --compiler flang --profile release --flag "-O3 -
 # Needed to find the appropriate .so files from within python
 ENV LD_LIBRARY_PATH=/app/lib:$LD_LIBRARY_PATH
 
-# Published normalization tables (python/table_registry.json), fetched and
+# Published normalization tables (python/cli/table_registry.json), fetched and
 # hash-checked at build time -- HPC compute nodes often have no internet.
-# python/normtables.py (and so PpqPDF(ppqn_table=NAME)) finds them here.
+# python/cli/normtables.py (and so PpqPDF(ppqn_table=NAME)) finds them here.
 ENV BAND_TABLES_DIR=/app/tables
-RUN mkdir -p /app/tables && python /app/python/normtables.py fetch --all
+RUN mkdir -p /app/tables && python /app/python/cli/normtables.py fetch --all

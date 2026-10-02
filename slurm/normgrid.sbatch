@@ -1,5 +1,5 @@
 #!/bin/bash
-# Slurm job array for building a normalization table (python/normgrid.py).
+# Slurm job array for building a normalization table (python/cli/normgrid.py).
 # One array task = one chunk of grid points, single core, no communication;
 # the whole grid is embarrassingly parallel.  A TEMPLATE: adjust the #SBATCH
 # lines (partition/account/time) for your cluster.  Locally tested with a
@@ -8,20 +8,20 @@
 #
 # Usage (from the repository root, after `mkdir -p logs results`):
 #
-#   python python/normgrid.py make-spec --band NR --region 2 200 4 100 \
+#   python python/cli/normgrid.py make-spec --band NR --region 2 200 4 100 \
 #          --epsrel 1e-7 --out spec_NR.json          # nodes: RECOMMENDED_NODES
-#   python python/normgrid.py make-random-spec --band NR --n 200 \
+#   python python/cli/normgrid.py make-random-spec --band NR --n 200 \
 #          --region 2 200 4 100 --epsrel 1e-7 --out held_NR.json
-#   N=$(python python/normgrid.py chunks spec_NR.json --size 500 | wc -l)
+#   N=$(python python/cli/normgrid.py chunks spec_NR.json --size 500 | wc -l)
 #   sbatch --array=0-$((N-1))%200 slurm/normgrid.sbatch spec_NR.json 500 results
 #   # same for the held-out validation points (used by `validate` below):
-#   N=$(python python/normgrid.py chunks held_NR.json --size 100 | wc -l)
+#   N=$(python python/cli/normgrid.py chunks held_NR.json --size 100 | wc -l)
 #   sbatch --array=0-$((N-1)) slurm/normgrid.sbatch held_NR.json 100 results
 #
 #   # when the arrays are done (quick; run on a login node or interactively):
-#   python python/normgrid.py merge --spec spec_NR.json --results 'results/res_spec_NR_*.txt' \
+#   python python/cli/normgrid.py merge --spec spec_NR.json --results 'results/res_spec_NR_*.txt' \
 #          --out tables/norm_NR_region2-200_4-100.h5
-#   python python/normgrid.py validate --table tables/norm_NR_region2-200_4-100.h5 \
+#   python python/cli/normgrid.py validate --table tables/norm_NR_region2-200_4-100.h5 \
 #          --heldout-spec held_NR.json --results 'results/res_held_NR_*.txt'
 #
 # Arguments: SPEC.json  [CHUNK_SIZE=500]  [RESULTS_DIR=results]
@@ -35,7 +35,7 @@
 # If tasks are killed (time limit, preemption) or fail, just submit the same
 # command again -- finished points are skipped, so only unfinished chunks do
 # real work.  Failed points are re-tried with a looser tolerance via
-#   python python/normgrid.py run --spec SPEC --start A --stop B --out FILE \
+#   python python/cli/normgrid.py run --spec SPEC --start A --stop B --out FILE \
 #          --retry-failed --epsrel 1e-6
 #
 # Environment (all optional):
@@ -76,7 +76,7 @@ export OMP_NUM_THREADS=1
 if [[ "${BAND_NATIVE:-0}" == "1" ]]; then
     RUN=()          # (expanded as ${RUN[@]+"${RUN[@]}"}: an empty array is an error under set -u on bash < 4.4)
     PY=${BAND_PYTHON:-python}
-    NORMGRID=python/normgrid.py
+    NORMGRID=python/cli/normgrid.py
     export LD_LIBRARY_PATH="$PWD/lib:${LD_LIBRARY_PATH:-}"
 else
     # apptainer and singularity take the same arguments here; clusters have
@@ -108,7 +108,7 @@ else
     [[ -f "$SIF" ]] || { echo "no container at $SIF on $(hostname): set BAND_SIF" >&2; exit 1; }
     RUN=("$CONTAINER_CMD" exec "${BINDS[@]}" --pwd "$PWD" "$SIF")
     PY=${BAND_PYTHON:-/opt/anaconda/envs/band/bin/python}
-    NORMGRID=/app/python/normgrid.py
+    NORMGRID=/app/python/cli/normgrid.py
     export APPTAINERENV_LD_LIBRARY_PATH="/app/lib:/opt/anaconda/envs/band/lib"
     export SINGULARITYENV_LD_LIBRARY_PATH=$APPTAINERENV_LD_LIBRARY_PATH   # older singularity
 fi

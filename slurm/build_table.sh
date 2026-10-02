@@ -76,8 +76,8 @@ SBATCH_ARGS=()
 [[ -n "${PARTITION:-}" ]] && SBATCH_ARGS+=(--partition="$PARTITION")
 [[ -n "${TIME:-}" ]] && SBATCH_ARGS+=(--time="$TIME")
 
-NG=("$PYTHON" python/normgrid.py)
-NP=("$PYTHON" python/normplan.py)
+NG=("$PYTHON" python/cli/normgrid.py)
+NP=("$PYTHON" python/cli/normplan.py)
 REGION=("$EP_MIN" "$EP_MAX" "$EQ_MIN" "$EQ_MAX")
 BOXOPT=(); [[ ${#BOX_ARGS[@]} -gt 0 ]] && BOXOPT=(--box "${BOX_ARGS[@]}")
 

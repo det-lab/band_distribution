@@ -4,7 +4,7 @@
 #   sbatch slurm/pull_container.job [IMAGE] [DEST]
 #
 # Defaults to the LLVM build at commit 9d251ee (head of region_normalization,
-# which is what python/normgrid.py and PpqN_region/PpqG_region need).
+# which is what python/cli/normgrid.py and PpqN_region/PpqG_region need).
 #
 # Nothing lands in $HOME: this cluster has no apptainer, only singularity-ce
 # 3.8, whose layer cache and scratch space default to $HOME/.singularity
@@ -99,7 +99,8 @@ ls -lh "$DEST"
 # from the wrong branch fails here rather than 4,500 array tasks later.
 singularity exec "$DEST" /opt/anaconda/envs/band/bin/python -c "
 import sys
-sys.path.insert(0, '/app/python')
+sys.path.insert(0, '/app/python/internal')
+sys.path.insert(0, '/app/python/cli')
 import _ppqfort_bindings, normgrid
 print('library version', '.'.join(map(str, _ppqfort_bindings.version())))
 print('region entry points',

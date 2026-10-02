@@ -1,5 +1,5 @@
 """
-Tests for python/normgrid.py that need no Fortran: node generation, index
+Tests for python/cli/normgrid.py that need no Fortran: node generation, index
 <-> coordinate mapping, the physical-parameter mapping (p10 >= p0), the
 tensor-Lagrange interpolant (exact for polynomials it can represent, exact at
 nodes, never extrapolates), the crash-tolerant resumable worker (using the
@@ -18,6 +18,7 @@ import numpy as np
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO_ROOT, "python"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "python", "cli"))
 import normgrid as ng
 
 failures = []

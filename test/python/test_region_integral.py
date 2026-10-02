@@ -25,7 +25,7 @@ import time
 from contextlib import redirect_stdout
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(REPO_ROOT, "python"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "python", "internal"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _ppqfort_bindings import (make_ppqg_pdf_unnormalized, make_ppqn_pdf_unnormalized,
@@ -118,7 +118,7 @@ def run_nonconvergence_check():
     print("Safety net: error stop fires on a non-convergent request")
     print(f"{'='*70}")
     script = (
-        "import sys; sys.path.insert(0, 'python'); "
+        "import sys; sys.path.insert(0, 'python/internal'); "
         "from _ppqfort_bindings import ppqn_region; "
         "ppqn_region(2.0, 200.0, 4.0, 100.0, epsrel=1e-300, epsabs=0.0, "
         "k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0, "
@@ -155,7 +155,7 @@ def run_invalid_input_check():
     all_ok = True
     for label, override, expect in cases:
         params = dict(base, **override)
-        script = ("import sys; sys.path.insert(0, 'python'); nan = float('nan'); "
+        script = ("import sys; sys.path.insert(0, 'python/internal'); nan = float('nan'); "
                   "from _ppqfort_bindings import ppqn_region; "
                   f"ppqn_region(2.0, 200.0, 4.0, 100.0, epsrel=1e-4, epsabs=1e-10, **{params!r})")
         t0 = time.time()

@@ -2,12 +2,12 @@
 # A TEMPLATE: adapt the container line and requirements to your access
 # point / pool -- it has not been run against a live OSG pool.
 #
-#   python python/normgrid.py make-spec --band NR --nodes k=... --region 2 200 4 100 --epsrel 1e-7 --out spec_NR.json
-#   python python/normgrid.py chunks spec_NR.json --size 100 \
+#   python python/cli/normgrid.py make-spec --band NR --nodes k=... --region 2 200 4 100 --epsrel 1e-7 --out spec_NR.json
+#   python python/cli/normgrid.py chunks spec_NR.json --size 100 \
 #       | awk '{printf "spec_NR.json, %s, %s, NR_%s\n", $1, $2, $1}' > chunks_NR.txt
 #   condor_submit osg/normgrid.sub          # (edit `queue` below to the right chunks file)
 #   ... when done:
-#   python python/normgrid.py merge --spec spec_NR.json --results 'result_NR_*.txt' --out norm_NR.h5
+#   python python/cli/normgrid.py merge --spec spec_NR.json --results 'result_NR_*.txt' --out norm_NR.h5
 #
 # Size chunks so a job takes ~10-30 minutes (OSG jobs can be evicted; an
 # evicted chunk is simply re-run from the start).

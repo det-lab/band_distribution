@@ -39,4 +39,4 @@ references:
         orcid: "https://orcid.org/0000-0002-2344-868X"
     notes: >-
       Precomputed region-normalization tables used by python/ppq_pdf.py and fetched by
-      python/normtables.py (python/table_registry.json).
+      python/cli/normtables.py (python/cli/table_registry.json).

@@ -9,11 +9,12 @@ MCMC -- if you want normalized PDF values or a likelihood, start here:
                                              p0=p0, p10=p10, q0=q0, q10=q10)
 
 See the README's "Normalizing a likelihood fit to a region" section for the
-full walkthrough, including precomputed tables for MCMC.  Everything else in
-python/ (_ppqfort_bindings.py's raw, unnormalized PDF evaluation; normgrid.py's
-table machinery; pq_dist_v10.py's pure-Python reference implementation) is
-either what PpqPDF is built from or infrastructure for maintaining this
-library -- not a second way to use it.
+full walkthrough, including precomputed tables for MCMC.  Everything else
+under python/ -- python/internal/_ppqfort_bindings.py (raw, unnormalized PDF
+evaluation), python/cli/normgrid.py (table machinery), python/internal/
+pq_dist_v10.py (pure-Python reference implementation) -- is either what
+PpqPDF is built from or infrastructure for maintaining this library -- not a
+second way to use it.
 
 PpqPDF: the fixed context for one fit/MCMC run -- an (Ep, Eq) region, the
 observed dataset, and the normalization-integral's convergence tolerance
@@ -32,11 +33,11 @@ verified nested Gauss-Legendre quadrature) and make_ppqn_pdf_unnormalized/
 make_ppqg_pdf_unnormalized (-> Fortran PpqN_vector/PpqG_vector) -- no new
 Fortran code and no new numerics.
 
-For MCMC, pass precomputed normalization tables (python/normgrid.py,
+For MCMC, pass precomputed normalization tables (python/cli/normgrid.py,
 built once on a batch system) as ppqn_table/ppqg_table: the integral then
 costs tens of microseconds instead of ~2 s, and raises rather than ever
 extrapolating outside the table's parameter box.  A table is a file path or
-a registered name (python/normtables.py fetches and caches it).
+a registered name (python/cli/normtables.py fetches and caches it).
 
 At MCMC setup, pass the prior's hard bounds as prior_bounds so a prior that
 reaches outside a table fails at construction, with the box to rebuild the
@@ -57,7 +58,13 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# _ppqfort_bindings.py and normgrid.py/normtables.py are no longer siblings
+# of this file -- they live in internal/ and cli/ respectively.
+_PYTHON_DIR = os.path.dirname(os.path.abspath(__file__))
+_INTERNAL_DIR = os.path.join(_PYTHON_DIR, "internal")
+_CLI_DIR = os.path.join(_PYTHON_DIR, "cli")
+
+sys.path.insert(0, _INTERNAL_DIR)
 from _ppqfort_bindings import make_ppqg_pdf_unnormalized, make_ppqn_pdf_unnormalized, ppqg_region, ppqn_region
 
 
@@ -74,8 +81,8 @@ class PpqPDF:
         hence the norm_ prefix.  Required for any band without a table.
     ppqn_table, ppqg_table : path, normgrid.NormInterpolator, or None
         Precomputed normalization table for that band (built by
-        python/normgrid.py for exactly this region), or a name registered in
-        python/table_registry.json.  If given, ppqn_integral/ppqg_integral
+        python/cli/normgrid.py for exactly this region), or a name registered in
+        python/cli/table_registry.json.  If given, ppqn_integral/ppqg_integral
         interpolate it instead of running the quadrature.
     prior_bounds : dict or None
         The MCMC prior's hard bounds, {param: (lo, hi)} for k (NR), F0, V,
@@ -141,6 +148,7 @@ class PpqPDF:
     def _load_table(self, table, band):
         if table is None:
             return None
+        sys.path.insert(0, _CLI_DIR)
         import normgrid
         if not isinstance(table, normgrid.NormInterpolator):
             if not os.path.exists(str(table)):

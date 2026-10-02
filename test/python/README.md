@@ -4,8 +4,8 @@ Everything in this directory validates the band-distribution PDFs; the code
 that *computes* the PDFs lives in `python/` at the repository root.  If
 you're looking for how to *use* the library (a fit or MCMC), that's
 `PpqPDF` in `python/ppq_pdf.py` — these tests validate the primitives it's
-built from (`python/_ppqfort_bindings.py`, private, and `pq_dist_v10.py`,
-the pure-Python reference implementation), not a second way to use it;
+built from (`python/internal/_ppqfort_bindings.py`, private, and
+`pq_dist_v10.py`, the pure-Python reference implementation), not a second way to use it;
 each test that needs the raw, unnormalized PDF says why in a comment at its
 import.  Run all scripts from the repository root; see the main README for
 expected timings and for how to build `lib/libband_distribution.so` first.
@@ -21,9 +21,9 @@ expected timings and for how to build `lib/libband_distribution.so` first.
 | `test_chisquare_nr_simulator.py` | Physics: events from the independent NR simulator follow the Fortran `PpqN`. |
 | `test_chisquare_er_simulator.py` | Physics: events from the independent ER simulator follow the Fortran `PpqG`. |
 | `test_region_integral.py` | The region-normalization integral (`ppqn_region`/`ppqg_region`) against nested `scipy.integrate.quad`, timing, the non-convergence safety net, and the fast error-out on invalid parameters (p10 < p0 etc.). |
-| `test_normgrid.py` | The precomputed-table pipeline (`python/normgrid.py`): interpolant exactness, no-extrapolation, crash-tolerant worker, HDF5 round trip. No Fortran needed. |
-| `test_normplan.py` | The node-count planner (`python/normplan.py`): study layout, the coefficient-tail criterion on functions of known smoothness, the study → analyze path with analytic stand-in evaluators, and that a rough axis stops the plan.  `test/slurm/test_build_table.sh` runs `slurm/build_table.sh` end to end against a mock `sbatch` (needs h5py). |
-| `test_normtables.py` | Published tables fetched by name (`python/normtables.py`): register/fetch round trip, hash verification, cache reuse, a bad-hash cached file is not trusted. Needs `pooch`. |
+| `test_normgrid.py` | The precomputed-table pipeline (`python/cli/normgrid.py`): interpolant exactness, no-extrapolation, crash-tolerant worker, HDF5 round trip. No Fortran needed. |
+| `test_normplan.py` | The node-count planner (`python/cli/normplan.py`): study layout, the coefficient-tail criterion on functions of known smoothness, the study → analyze path with analytic stand-in evaluators, and that a rough axis stops the plan.  `test/slurm/test_build_table.sh` runs `slurm/build_table.sh` end to end against a mock `sbatch` (needs h5py). |
+| `test_normtables.py` | Published tables fetched by name (`python/cli/normtables.py`): register/fetch round trip, hash verification, cache reuse, a bad-hash cached file is not trusted. Needs `pooch`. |
 | `test_ppq_pdf_tables.py` | `PpqPDF`'s MCMC setup checks against tables: `prior_bounds` (shared and band-specific keys), `check_points`, `table_bounds`, and an unregistered table name. |
 | `test_version.py` | The compiled library's reported version (`PpqFort_version()`) matches `fpm.toml`'s `version` field — the regression guard for `scripts/generate_version_include.py` (see the main README's fpm section). |
 

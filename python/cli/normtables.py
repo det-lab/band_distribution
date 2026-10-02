@@ -1,8 +1,8 @@
 """
 Published normalization tables: fetch by name, verified and cached.
 
-The tables (python/normgrid.py, built by slurm/build_table.sh) are data, so
-they live on Zenodo rather than in git; python/table_registry.json maps each
+The tables (python/cli/normgrid.py, built by slurm/build_table.sh) are data, so
+they live on Zenodo rather than in git; python/cli/table_registry.json maps each
 name to its URL and SHA-256.  fetch() downloads a table the first time with
 pooch (https://www.fatiando.org/pooch/), checks the hash, and caches it;
 later calls use the cached file with no network.  PpqPDF(ppqn_table=NAME)
@@ -17,9 +17,9 @@ internet), else the user cache directory (~/.cache/band_distribution).
 
 CLI (from the repository root):
 
-  python python/normtables.py list
-  python python/normtables.py fetch [NAME ...] [--all]
-  python python/normtables.py register --doi 10.5281/zenodo.NNNN tables/norm_*.h5
+  python python/cli/normtables.py list
+  python python/cli/normtables.py fetch [NAME ...] [--all]
+  python python/cli/normtables.py register --doi 10.5281/zenodo.NNNN tables/norm_*.h5
 
 `register` records files already uploaded to that Zenodo record (upload
 first, then register and commit the registry); names come from the file

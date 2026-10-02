@@ -1,5 +1,5 @@
 """
-Tests for python/normplan.py (the node-count planner) that need no Fortran:
+Tests for python/cli/normplan.py (the node-count planner) that need no Fortran:
 the study spec's layout, the coefficient-tail criterion on functions with
 known convergence, and the whole study -> analyze path through the real
 worker using normgrid's analytic stand-in evaluators (NORMGRID_FAKE=smooth
@@ -15,7 +15,7 @@ import tempfile
 import numpy as np
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(REPO_ROOT, "python"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "python", "cli"))
 import normgrid as ng
 import normplan as npl
 

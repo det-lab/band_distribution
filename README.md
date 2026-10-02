@@ -3,7 +3,7 @@ This code is useful for dark matter searches where detector output is Ep (total 
 
 # Citing
 
-Citation metadata for the code is in `CITATION.cff` (GitHub's "Cite this repository" button); each release is archived on Zenodo.  The precomputed normalization tables are a separate dataset, [doi:10.5281/zenodo.23048215](https://doi.org/10.5281/zenodo.23048215) (all versions; one version per added fit window), which `python/normtables.py` fetches by name.
+Citation metadata for the code is in `CITATION.cff` (GitHub's "Cite this repository" button); each release is archived on Zenodo.  The precomputed normalization tables are a separate dataset, [doi:10.5281/zenodo.23048215](https://doi.org/10.5281/zenodo.23048215) (all versions; one version per added fit window), which `python/cli/normtables.py` fetches by name.
 
 # Getting started: use the published containers
 
@@ -60,13 +60,13 @@ normalized = band_pdf.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-
                                              p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
 ```
 
-The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  **If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below) and your region doesn't match the one a table was built for exactly, `PpqPDF` raises at construction rather than silently normalizing wrong.**  The fix is to build a new table for your region — see [Precomputed normalization tables for MCMC](#precomputed-normalization-tables-for-mcmc-pythonnormgridpy), in particular "One command for a whole table" below.
+The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  **If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below) and your region doesn't match the one a table was built for exactly, `PpqPDF` raises at construction rather than silently normalizing wrong.**  The fix is to build a new table for your region — see [Precomputed normalization tables for MCMC](#precomputed-normalization-tables-for-mcmc-pythonclinormgridpy), in particular "One command for a whole table" below.
 
-See [Normalizing a likelihood fit to a region](#normalizing-a-likelihood-fit-to-a-region-ppqpdf) below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `_ppqfort_bindings.py` (the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API), `normgrid.py`'s table machinery, `pq_dist_v10.py`'s pure-Python reference implementation — is infrastructure, not a second way to use the library.  See [Verification and validation](#verification-and-validation) for the test suite.
+See [Normalizing a likelihood fit to a region](#normalizing-a-likelihood-fit-to-a-region-ppqpdf) below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `python/internal/` (`_ppqfort_bindings.py`, the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API; and `pq_dist_v10.py`, the pure-Python reference implementation) and `python/cli/` (`normgrid.py`'s table machinery and friends) — is infrastructure, not a second way to use the library.  See [Verification and validation](#verification-and-validation) for the test suite.
 
 # Normalizing a likelihood fit to a region: `PpqPDF`
 
-A likelihood fit needs the *un-normalized* PDF at each data point and the PDF's integral over the fit region (to normalize it) — both re-evaluated at every step as the fit/MCMC explores parameter space.  Computing that normalization with `scipy.integrate.quad` is several seconds per call (it evaluates the PDF one point at a time, at the ~3-25 ms/point *scalar* cost — see `python/_ppqfort_bindings.py`'s docstring); `python/ppq_pdf.py`'s `PpqPDF` instead uses a doubling-verified nested Gauss-Legendre quadrature evaluated in one batched, thread-parallel call (`PpqN_region`/`PpqG_region` in Fortran — the ridge location/width is already known exactly, same physics as `test/python/band_breakpoints.py`'s ridge/width derivation, so it needs far fewer points than a naive grid for the same accuracy), landing well under a second per call even for a wide region under `ifx`/`flang`.
+A likelihood fit needs the *un-normalized* PDF at each data point and the PDF's integral over the fit region (to normalize it) — both re-evaluated at every step as the fit/MCMC explores parameter space.  Computing that normalization with `scipy.integrate.quad` is several seconds per call (it evaluates the PDF one point at a time, at the ~3-25 ms/point *scalar* cost — see `python/internal/_ppqfort_bindings.py`'s docstring); `python/ppq_pdf.py`'s `PpqPDF` instead uses a doubling-verified nested Gauss-Legendre quadrature evaluated in one batched, thread-parallel call (`PpqN_region`/`PpqG_region` in Fortran — the ridge location/width is already known exactly, same physics as `test/python/band_breakpoints.py`'s ridge/width derivation, so it needs far fewer points than a naive grid for the same accuracy), landing well under a second per call even for a wide region under `ifx`/`flang`.
 
 `PpqPDF` bundles the things that *don't* change across a fit/MCMC run — the region, the observed dataset, and the normalization quadrature's convergence tolerance — at construction, so every subsequent call only needs the physics parameters that the fit is actually varying.  The region is `ep_min, ep_max, eq_min, eq_max`: the (Ep, Eq) analysis window in keV that your data is cut to, and the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  If you later add precomputed tables (`ppqn_table=`/`ppqg_table=`), this region must match the one the table was built for exactly; `PpqPDF` checks that at construction and raises if it doesn't — build a new table for your region instead (below) rather than widening the region to fit an existing one:
 
@@ -106,7 +106,7 @@ Same shape for the ER band (`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there
 * Call the vectorized entry points (`PpqN_vector` / `PpqG_vector`) with all events in one call — the parallelism lives there, and per-event scalar calls pay OpenMP fork/join overhead instead.
 * **Shuffle the event array once at load time if it is ordered.**  The vector loops split the events into one contiguous chunk per thread (static scheduling), and the loop only finishes when the slowest chunk does.  Per-event cost varies several-fold across the (Ep, Eq) plane — deep-tail events short-circuit in ~2 us while on-band events cost ~10-15 us — so an energy-ordered array hands some threads chunks of expensive events while others idle at the barrier.  Shuffling gives every chunk a similar cost mix and measured 8-15% faster than energy-ordered input.  The result is identical either way, and if your events are already in effectively random order this changes nothing.
 
-# Precomputed normalization tables for MCMC: `python/normgrid.py`
+# Precomputed normalization tables for MCMC: `python/cli/normgrid.py`
 
 Even at ~2 s, computing the normalization integral at every MCMC step is out of the question.  But the region is fixed for a whole run and the integral is a very smooth function of the physics parameters the MCMC varies, so `normgrid.py` evaluates it once on a small tensor grid (one independent integral per grid point — a good fit for the OSG) and interpolates it at tens of microseconds per step.  Separate tables for the NR band (`k, F0, V, p0, p10, q0, q10`) and the ER band (same, no `k`); `Z` and `eps` are fixed inside a table and checked on every call.
 
@@ -119,22 +119,22 @@ A few design points worth knowing:
 ```
 # describe the grid (region and epsrel are required; nodes default to RECOMMENDED_NODES
 # and the box to the one above -- a wrong region makes a table that looks fine and isn't)
-python python/normgrid.py make-spec --band NR --region 2.5 350 0.75 200 --epsrel 1e-7 --out spec_NR.json
-python python/normgrid.py make-random-spec --band NR --n 200 --region 2.5 350 0.75 200 --epsrel 1e-7 --out held_NR.json
+python python/cli/normgrid.py make-spec --band NR --region 2.5 350 0.75 200 --epsrel 1e-7 --out spec_NR.json
+python python/cli/normgrid.py make-random-spec --band NR --n 200 --region 2.5 350 0.75 200 --epsrel 1e-7 --out held_NR.json
 
 # run it: on one machine, or as batch jobs (osg/normgrid.sub + osg/normgrid_job.sh are an HTCondor template)
-python python/normgrid.py chunks spec_NR.json --size 100        # "start stop" ranges, one per job
-python python/normgrid.py run --spec spec_NR.json --start 0 --stop 100 --out res_0.txt
-python python/normgrid.py run --spec held_NR.json --out res_held.txt
+python python/cli/normgrid.py chunks spec_NR.json --size 100        # "start stop" ranges, one per job
+python python/cli/normgrid.py run --spec spec_NR.json --start 0 --stop 100 --out res_0.txt
+python python/cli/normgrid.py run --spec held_NR.json --out res_held.txt
 
 # combine into one HDF5 file and check it against the held-out points
-python python/normgrid.py merge --spec spec_NR.json --results 'res_*.txt' --out norm_NR.h5
-python python/normgrid.py validate --table norm_NR.h5 --heldout-spec held_NR.json --results res_held.txt
+python python/cli/normgrid.py merge --spec spec_NR.json --results 'res_*.txt' --out norm_NR.h5
+python python/cli/normgrid.py validate --table norm_NR.h5 --heldout-spec held_NR.json --results res_held.txt
 ```
 
 **On a Slurm cluster** use the **ifx (or flang) container, not gfortran** — gfortran runs the band integrals ~25x slower — via `slurm/normgrid.sbatch`, a job-array template (one single-core task per chunk of grid points; `OMP_NUM_THREADS=1` so an ifx build doesn't oversubscribe cores; a header comment gives the exact `sbatch` and `merge`/`validate` commands, and resubmitting the same array only redoes unfinished chunks).  It runs the container `$BAND_SIF` (default `/scratch/$USER/containers/band.sif`, as pulled by `slurm/pull_container.job`), a `band.sif` built from `Dockerfile_intel` or `Dockerfile_llvm` (see Docker / Apptainer images under [Building from source](#building-from-source)), or set `BAND_NATIVE=1` to use a library you built on the cluster.  `osg/` holds a similar HTCondor template.
 
-**One command for a whole table.**  How many nodes an axis needs depends on the fit region (the same box needed 5 nodes in `q0` for Eq 4–100 and about 16 for Eq 0.75–200), so `slurm/build_table.sh` measures instead of assuming.  For a region it (1) evaluates 33 Chebyshev–Lobatto nodes along each axis at three baseline points (`python/normplan.py points`, about 700 integrals), (2) reads the Chebyshev coefficients of each axis to find the fewest nodes whose truncation error is below `TOL` (`normplan.py analyze`; it stops with an error if an axis is not resolved by 33 nodes, rather than guessing), (3) evaluates the resulting grid and a set of held-out points, and (4) merges and validates, exiting with status 1 if the worst held-out error exceeds `ACCEPT`:
+**One command for a whole table.**  How many nodes an axis needs depends on the fit region (the same box needed 5 nodes in `q0` for Eq 4–100 and about 16 for Eq 0.75–200), so `slurm/build_table.sh` measures instead of assuming.  For a region it (1) evaluates 33 Chebyshev–Lobatto nodes along each axis at three baseline points (`python/cli/normplan.py points`, about 700 integrals), (2) reads the Chebyshev coefficients of each axis to find the fewest nodes whose truncation error is below `TOL` (`python/cli/normplan.py analyze`; it stops with an error if an axis is not resolved by 33 nodes, rather than guessing), (3) evaluates the resulting grid and a set of held-out points, and (4) merges and validates, exiting with status 1 if the worst held-out error exceeds `ACCEPT`:
 
 ```
 sbatch slurm/build_table.job NR 2.5 350 0.75 200              # -> tables/norm_NR_ep2.5-350_eq0.75-200.h5
@@ -155,7 +155,7 @@ band_pdf = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
 # band_pdf.ppqn_integral(...) / band_pdf.ppqg_integral(...) now interpolate instead of integrating
 ```
 
-**Published tables** are listed in `python/table_registry.json` and can be passed by name instead of a path: `python/normtables.py` downloads them from [Zenodo](https://doi.org/10.5281/zenodo.23048215) on first use, checks their SHA-256, and caches them (`$BAND_TABLES_DIR`, else `~/.cache/band_distribution`; the containers ship with every registered table in `/app/tables`).  `python python/normtables.py list` shows what is available.
+**Published tables** are listed in `python/cli/table_registry.json` and can be passed by name instead of a path: `python/cli/normtables.py` downloads them from [Zenodo](https://doi.org/10.5281/zenodo.23048215) on first use, checks their SHA-256, and caches them (`$BAND_TABLES_DIR`, else `~/.cache/band_distribution`; the containers ship with every registered table in `/app/tables`).  `python python/cli/normtables.py list` shows what is available.
 
 # Fits and MCMC with the tables
 
