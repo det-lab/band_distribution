@@ -59,6 +59,8 @@ normalized = fit.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V,
                                          p0=p0, p10=p10, q0=q0, q10=q10)
 ```
 
+`ep_min, ep_max, eq_min, eq_max` are your analysis region (ROI) in keV — the same (Ep, Eq) window your data is already cut to; `fit.ppqn_integral`/`ppqg_integral` normalize over exactly that box, so it has to be the real cut, not an arbitrary wide range.  If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below), this region must match the one the table was built for exactly — `PpqPDF` checks this at construction and raises if it doesn't.
+
 See "Normalizing a likelihood fit to a region" below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `_ppqfort_bindings.py` (the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API), `normgrid.py`'s table machinery, `pq_dist_v10.py`'s pure-Python reference implementation — is infrastructure, not a second way to use the library.  The sections below (testing, performance) are for verifying and maintaining the library itself; skip to "Normalizing a likelihood fit to a region" if you just want to use it.
 
 # Testing the python calls
@@ -135,7 +137,7 @@ docker run --rm -v $(pwd)/figures:/app/figures band_distribution_intel \
 
 A likelihood fit needs the *un-normalized* PDF at each data point and the PDF's integral over the fit region (to normalize it) — both re-evaluated at every step as the fit/MCMC explores parameter space.  Computing that normalization with `scipy.integrate.quad` is several seconds per call (it evaluates the PDF one point at a time, at the ~3-25 ms/point *scalar* cost — see `python/_ppqfort_bindings.py`'s docstring); `python/ppq_pdf.py`'s `PpqPDF` instead uses a doubling-verified nested Gauss-Legendre quadrature evaluated in one batched, thread-parallel call (`PpqN_region`/`PpqG_region` in Fortran — the ridge location/width is already known exactly, same physics as `test/python/band_breakpoints.py`'s ridge/width derivation, so it needs far fewer points than a naive grid for the same accuracy), landing well under a second per call even for a wide region under `ifx`/`flang`.
 
-`PpqPDF` bundles the things that *don't* change across a fit/MCMC run — the region, the observed dataset, and the normalization quadrature's convergence tolerance — at construction, so every subsequent call only needs the physics parameters that the fit is actually varying:
+`PpqPDF` bundles the things that *don't* change across a fit/MCMC run — the region, the observed dataset, and the normalization quadrature's convergence tolerance — at construction, so every subsequent call only needs the physics parameters that the fit is actually varying.  The region is `ep_min, ep_max, eq_min, eq_max`: the (Ep, Eq) analysis window in keV that your data is cut to, and the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  If you later add precomputed tables (`ppqn_table=`/`ppqg_table=`), this region must match the one the table was built for exactly; `PpqPDF` checks that at construction and raises if it doesn't:
 
 ```python
 import sys
