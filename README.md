@@ -59,10 +59,10 @@ from ppq_pdf import PpqPDF
 ep_min, ep_max = 2.5, 350.0
 eq_min, eq_max = 0.75, 200.0
 
-fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,  # ep_data/eq_data: your measured events, keV
-             norm_epsrel=1e-4, norm_epsabs=1e-10)
-normalized = fit.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0,
-                                         p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
+band_pdf = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,  # ep_data/eq_data: your measured events, keV
+                  norm_epsrel=1e-4, norm_epsabs=1e-10)
+normalized = band_pdf.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0,
+                                             p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
 ```
 
 The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below), this region must match the one the table was built for exactly — `PpqPDF` checks this at construction and raises if it doesn't.
@@ -159,8 +159,8 @@ from ppq_pdf import PpqPDF
 ep_min, ep_max = 2.5, 350.0
 eq_min, eq_max = 0.75, 200.0
 
-fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
-             norm_epsrel=1e-4, norm_epsabs=1e-10)
+band_pdf = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+                  norm_epsrel=1e-4, norm_epsabs=1e-10)
 # norm_epsrel/norm_epsabs set how tightly two successive doubled
 # quadrature orders must agree before the normalization integral is
 # trusted (see PpqN_region's doc comment in src/PpqFort_m.f90) -- NOT
@@ -169,14 +169,14 @@ fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
 # test_region_integral.py, including a 247 keV-wide region.
 
 def loglike(k, Z, F0, eps, V, p0, p10, q0, q10):
-    normalized = fit.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
+    normalized = band_pdf.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p10, q0=q0, q10=q10)
     return np.sum(np.log(normalized))
 
 # e.g. loglike(k=0.18, Z=32.0, F0=0.122, eps=3.0e-3, V=3.0,
 #              p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151)
 ```
 
-Same shape for the ER band (`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there — also `ppqg_values`/`ppqg_integral` if you want the unnormalized value and the normalization separately). Build `fit` once, outside the fit loop; call its methods once per step, inside.
+Same shape for the ER band (`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there — also `ppqg_values`/`ppqg_integral` if you want the unnormalized value and the normalization separately). Build `band_pdf` once, outside the fit loop; call its methods once per step, inside.
 
 # Precomputed normalization tables for MCMC: `python/normgrid.py`
 
@@ -222,9 +222,9 @@ Each Slurm stage is `sbatch --wait slurm/normgrid.sbatch ...`, so `slurm/build_t
 ep_min, ep_max = 2.5, 350.0
 eq_min, eq_max = 0.75, 200.0
 
-fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
-             ppqn_table="norm_NR.h5", ppqg_table="norm_ER.h5")
-# fit.ppqn_integral(...) / fit.ppqg_integral(...) now interpolate instead of integrating
+band_pdf = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+                  ppqn_table="norm_NR.h5", ppqg_table="norm_ER.h5")
+# band_pdf.ppqn_integral(...) / band_pdf.ppqg_integral(...) now interpolate instead of integrating
 ```
 
 **Published tables** are listed in `python/table_registry.json` and can be passed by name instead of a path: `python/normtables.py` downloads them from [Zenodo](https://doi.org/10.5281/zenodo.23048215) on first use, checks their SHA-256, and caches them (`$BAND_TABLES_DIR`, else `~/.cache/band_distribution`; the containers ship with every registered table in `/app/tables`).  `python python/normtables.py list` shows what is available.
@@ -234,8 +234,8 @@ fit = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
 A table covers a fixed box of parameters and never extrapolates, so the rule for a fit or an MCMC is the same: **keep every parameter inside the tables' box, with `p10 >= p0` and `q10 >= q0`** (the PDF is undefined otherwise).  The library checks this and says what to change; the fit or MCMC code has to enforce it.
 
 * `PpqPDF(..., prior_bounds=BOUNDS)` checks hard bounds against every table given, at construction.  If they reach outside a table it raises `PriorNotCoveredError`, listing each short axis and the `BOX=` rebuild command that would cover them.
-* `pdf.table_bounds()` gives, per band, the widest bounds each table covers: a ready-made set of hard bounds.  Take bounds from it, or round inward: the box edges are not round numbers (`p0` starts at 0.0128438), and bounds rounded outward fail the check.
-* `pdf.check_points(points)` checks a set of points, e.g. an MCMC's starting walkers.
+* `band_pdf.table_bounds()` gives, per band, the widest bounds each table covers: a ready-made set of hard bounds.  Take bounds from it, or round inward: the box edges are not round numbers (`p0` starts at 0.0128438), and bounds rounded outward fail the check.
+* `band_pdf.check_points(points)` checks a set of points, e.g. an MCMC's starting walkers.
 * At run time, a query outside a table raises `OutOfBoxError` naming the axis, the value, the box and the table file.  After the setup checks pass, that means a bug or a NaN.
 
 Bounds are physical parameters, `{name: (lo, hi)}`.  Parameters the two bands share go at the top level; each band's own (NR's `k`, and the Fano factor `F0`, which differs between the bands) go under `"NR"` and `"ER"`.  `Z` and `eps` are fixed inside a table; pass them as their fixed values or leave them out.
@@ -252,9 +252,9 @@ BOUNDS = {"V": (2.7, 3.3), "p0": (0.0129, 0.1155), "p10": (0.3, 0.6),
 ep_min, ep_max = 2.5, 350.0
 eq_min, eq_max = 0.75, 200.0
 
-pdf = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
-             ppqn_table="NR_ep2.5-350_eq0.75-200", ppqg_table="ER_ep2.5-350_eq0.75-200",
-             prior_bounds=BOUNDS)                  # 1. fails now, not hours into the run
+band_pdf = PpqPDF(ep_min, ep_max, eq_min, eq_max, ep_data, eq_data,
+                  ppqn_table="NR_ep2.5-350_eq0.75-200", ppqg_table="ER_ep2.5-350_eq0.75-200",
+                  prior_bounds=BOUNDS)                  # 1. fails now, not hours into the run
 
 def log_prior(theta):                             # 2. -inf outside the hard bounds and the ordering
     p = unpack(theta)
@@ -266,9 +266,9 @@ def log_prob(theta):                              # 3. the prior first: the tabl
     lp = log_prior(theta)                         #    a point outside it
     if not np.isfinite(lp):
         return -np.inf
-    return lp + log_likelihood(theta, pdf)
+    return lp + log_likelihood(theta, band_pdf)
 
-pdf.check_points(as_params(start))               # 4. starting walkers inside, before sampling
+band_pdf.check_points(as_params(start))          # 4. starting walkers inside, before sampling
                                                   #    ({param: array}, laid out like BOUNDS)
 ```
 
@@ -277,7 +277,7 @@ A Gaussian prior (on `p0` or `q0`, say) must be truncated by the hard bounds: `p
 ## Fits (maximum likelihood / MAP)
 
 * Give the optimizer bounds inside the tables (e.g. `bounds=` for `scipy.optimize.minimize` with L-BFGS-B, Powell or trust-constr), and check them once with `prior_bounds` or `table_bounds()`.
-* Box bounds cannot express `p10 >= p0`.  Either fit `dp = p10 - p0` and `dq = q10 - q0` directly, bounded by the tables' own `dp`/`dq` axes (`pdf.ppqn_table.box["dp"]`, 0.18–0.59 by default; `dq` 0–0.353), and convert back when calling the PDF, or add the inequalities as constraints (trust-constr, SLSQP).
+* Box bounds cannot express `p10 >= p0`.  Either fit `dp = p10 - p0` and `dq = q10 - q0` directly, bounded by the tables' own `dp`/`dq` axes (`band_pdf.ppqn_table.box["dp"]`, 0.18–0.59 by default; `dq` 0–0.353), and convert back when calling the PDF, or add the inequalities as constraints (trust-constr, SLSQP).
 * A fit that ends on a bound is being limited by the box, not the data: widen it with `BOX=` and rebuild the tables.
 
 # Build the singularity/apptainer container for HPC submissions
