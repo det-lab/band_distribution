@@ -21,7 +21,7 @@ import sys, os
 
 # Y, sigp, sigq come from the validated python reference implementation
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "python", "internal"))
-import pq_dist_v10 as ppq
+import ppq_dist as ppq
 
 
 def _sample_PErN(n, rng, PNa, PNb, PNd):
