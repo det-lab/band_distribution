@@ -12,7 +12,7 @@ See the README's "Normalizing a likelihood fit to a region" section for the
 full walkthrough, including precomputed tables for MCMC.  Everything else
 under python/ -- python/internal/_ppqfort_bindings.py (raw, unnormalized PDF
 evaluation), python/cli/normgrid.py (table machinery), python/internal/
-pq_dist_v10.py (pure-Python reference implementation) -- is either what
+ppq_dist.py (pure-Python reference implementation) -- is either what
 PpqPDF is built from or infrastructure for maintaining this library -- not a
 second way to use it.
 

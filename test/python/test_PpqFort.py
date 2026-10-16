@@ -5,13 +5,13 @@ import os
 
 repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Path to the directory containing pq_dist_v10.py
+# Path to the directory containing ppq_dist.py
 module_dir = os.path.join(repo_root, 'python', 'internal')
 sys.path.append(module_dir)
 
-# pq_dist_v10 contains the Python implementation with the numerical N integral
+# ppq_dist contains the Python implementation with the numerical N integral
 # (21-point Simpson's rule, sigp/sigq at noiseless energies), matching Fortran PpqN.
-import pq_dist_v10 as ppq
+import ppq_dist as ppq
 
 folderpath = repo_root
 if os.name == 'posix': #Linux/Mac

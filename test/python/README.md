@@ -5,7 +5,7 @@ that *computes* the PDFs lives in `python/` at the repository root.  If
 you're looking for how to *use* the library (a fit or MCMC), that's
 `PpqPDF` in `python/ppq_pdf.py` — these tests validate the primitives it's
 built from (`python/internal/_ppqfort_bindings.py`, private, and
-`pq_dist_v10.py`, the pure-Python reference implementation), not a second way to use it;
+`ppq_dist.py`, the pure-Python reference implementation), not a second way to use it;
 each test that needs the raw, unnormalized PDF says why in a comment at its
 import.  Run all scripts from the repository root; see the main README for
 expected timings and for how to build `lib/libband_distribution.so` first.
