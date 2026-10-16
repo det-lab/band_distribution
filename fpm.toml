@@ -1,5 +1,5 @@
 name = "band_distribution"
-version = "1.1.4"
+version = "1.1.5"
 
 [install]
 library = true
