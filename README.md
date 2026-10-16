@@ -62,7 +62,7 @@ normalized = band_pdf.ppqn_normalized_values(k=0.18, Z=32.0, F0=0.122, eps=3.0e-
 
 The region is the box the normalization integral is computed over — it has to be your real analysis ROI, not an arbitrary wide range, or the normalization (and so the likelihood) is wrong.  **If you use precomputed tables (`ppqn_table=`/`ppqg_table=`, below) and your region doesn't match the one a table was built for exactly, `PpqPDF` raises at construction rather than silently normalizing wrong.**  The fix is to build a new table for your region — see [Precomputed normalization tables for MCMC](#precomputed-normalization-tables-for-mcmc-pythonclinormgridpy), in particular "One command for a whole table" below.
 
-See [Normalizing a likelihood fit to a region](#normalizing-a-likelihood-fit-to-a-region-ppqpdf) below for the full walkthrough, including precomputed tables for MCMC.  Everything else under `python/` — `python/internal/` (`_ppqfort_bindings.py`, the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API; and `ppq_dist.py`, the pure-Python reference implementation) and `python/cli/` (`normgrid.py`'s table machinery and friends) — is infrastructure, not a second way to use the library.  See [Verification and validation](#verification-and-validation) for the test suite.
+See [Normalizing a likelihood fit to a region](#normalizing-a-likelihood-fit-to-a-region-ppqpdf) below for the full walkthrough, including precomputed tables for MCMC.  If you instead want to generate simulated (Ep, Eq) events, see [Generating simulated events: `event_generator.py`](#generating-simulated-events-event_generatorpy) below — a second, independent entrypoint with no Fortran dependency.  Everything else under `python/` — `python/internal/` (`_ppqfort_bindings.py`, the raw, unnormalized ctypes layer `PpqPDF` is built on — private, leading underscore, not a public API; and `ppq_dist.py`, the pure-Python reference implementation) and `python/cli/` (`normgrid.py`'s table machinery and friends) — is infrastructure, not a third way to use the library.  See [Verification and validation](#verification-and-validation) for the test suite.
 
 # Normalizing a likelihood fit to a region: `PpqPDF`
 
@@ -99,6 +99,32 @@ def loglike(k, Z, F0, eps, V, p0, p10, q0, q10):
 ```
 
 Same shape for the ER band (`ppqg_normalized_values`, no `k`/`Z` — `Y=1` there — also `ppqg_values`/`ppqg_integral` if you want the unnormalized value and the normalization separately). Build `band_pdf` once, outside the fit loop; call its methods once per step, inside.
+
+# Generating simulated events: `event_generator.py`
+
+If you want simulated `(Ep, Eq)` detector events instead of PDF values — to validate a fit pipeline end to end, or to feed a downstream analysis — `event_generator.py` (`python/event_generator.py`) is the entrypoint, independent of `PpqPDF`.  Unlike `PpqPDF`, it has **no Fortran dependency**: it's pure Python/numpy built on `python/internal/ppq_dist.py`, so it works in any environment this package is installed into, container or not.
+
+```python
+import sys
+sys.path.insert(0, "python")
+from event_generator import generate_events
+
+events = generate_events(
+    target_size=20_000, ER_frac=0.6, seed_value=8,
+    ep_min=2.5, ep_max=350.0, eq_min=0.75, eq_max=200.0,
+    k=0.18, Z=32.0, F0_ER=0.2, F0_NR=0.122, eps=3.0e-3, V=3.0,
+    p0=0.06421907, p10=0.48998486, q0=0.23718488, q10=0.27093151,
+    PNa=0.53693208, PNb=6.41515782, PNd=23.71789286,
+    PGa=0.573211975, PGb=0.169520023, PGd=279.552394,
+)
+Ep, Eq = events["EP"].to_numpy(), events["EQ"].to_numpy()
+```
+
+`target_size` events are returned, cropped to `[ep_min, ep_max] x [eq_min, eq_max]` (your real analysis ROI, same box `PpqPDF` would be normalized over); the ER/NR split is `Binomial(target_size, ER_frac)`, so `ER_frac=1.0`/`0.0` give deterministic pure-ER/pure-NR samples and anything in between carries the same sampling fluctuation a real dataset would. The returned `DataFrame` has columns `EP, EQ, N0, is_ER, seed_value, is_bkg` — `is_bkg` is always `False` here; it exists only so these rows can be concatenated directly with a separate zero-charge/surface-background generator that produces the same columns (e.g. a KDE-based one kept in a downstream analysis repo, out of scope for this library).
+
+The same generative model this draws from — `Er ~ PErN`/`PErG`, `N | Er ~ TruncNormal`, `(Ep, Eq) | Er, N ~ Normal` — is what `PpqN`/`PpqG` are obtained by marginalizing analytically over `N` and numerically over `Er`; `test/python/test_chisquare_{nr,er}_simulator.py` checks that events from this module land on the Fortran `PpqN`/`PpqG`, which is a real physics check since this module never touches `PpqN`/`PpqG` itself. See [Verification and validation](#verification-and-validation).
+
+For single-species sampling without the ROI retry/mixing logic (e.g. for a custom pipeline), the lower-level `generate_NR_events`/`generate_ER_events` are also public — see their docstrings in `event_generator.py`.
 
 # Performance notes
 `PpqN` / `PpqG` integrate over a window placed around the located peak(s) of the Er integrand rather than sampling the full physical range, evaluating at roughly 6 microseconds per (Ep, Eq) point in vector mode (18 threads under x86 emulation; measured via `PpqN_vector` over a representative grid).  This number assumes an ifx or flang build — gfortran builds run the band integrals serially and are ~25x slower (see the compiler notes under [Building from source](#building-from-source)).  For likelihood loops (e.g. MCMC):
@@ -248,7 +274,7 @@ It caches its PDF grid evaluation in `ppqn_vertex_grid.npz` (not committed) and 
 The `test_chisquare_ppqn.py` timing assumes an ifx or flang build; gfortran builds run the band integrals serially (see the compiler notes under [Building from source](#building-from-source)) and take correspondingly longer.
 
 ## Physics-simulator validation tests
-The tests above only check that the PDFs are *self-consistent* (samples drawn from a PDF match that same PDF).  The two tests below are the stronger check: they generate events from an independent physics simulator (`test/python/generate_events.py`, which draws Er from the recoil spectrum, N from a truncated normal, and applies detector resolution) and compare the binned counts against the Fortran PDFs.  A pass means the Fortran `PpqN` / `PpqG` implementations correctly describe the physics.
+The tests above only check that the PDFs are *self-consistent* (samples drawn from a PDF match that same PDF).  The two tests below are the stronger check: they generate events from an independent physics simulator ([`python/event_generator.py`](#generating-simulated-events-event_generatorpy), which draws Er from the recoil spectrum, N from a truncated normal, and applies detector resolution) and compare the binned counts against the Fortran PDFs.  A pass means the Fortran `PpqN` / `PpqG` implementations correctly describe the physics.
 
 ```
 LD_LIBRARY_PATH=lib python test/python/test_chisquare_nr_simulator.py [n_throws] [n_bins]   # NR band vs PpqN

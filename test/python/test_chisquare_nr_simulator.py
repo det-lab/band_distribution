@@ -45,10 +45,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "python"))
 sys.path.insert(0, str(REPO_ROOT / "python" / "internal"))
 
 from band_breakpoints import make_ridge_breakpoints
-from generate_events import generate_NR_events
+from event_generator import generate_NR_events
 # Unnormalized is fine: this test only compares the PDF's *shape* against
 # simulated events (chi-square binning), not absolute probability.  For a
 # fit or MCMC, use PpqPDF (python/ppq_pdf.py) instead.
