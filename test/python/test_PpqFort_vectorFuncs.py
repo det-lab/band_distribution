@@ -4,10 +4,12 @@ import os
 import sys
 
 folderpath = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if os.name == 'posix': #Linux/Mac
+if sys.platform == 'darwin':
+    DLLname = 'lib/libband_distribution.dylib'
+elif os.name == 'posix':  # Linux
     DLLname = 'lib/libband_distribution.so'
 else:
-    print ('OS other than Linux/Mac are not supported')
+    print('OS other than Linux/Mac are not supported')
 
 api = np.ctypeslib.load_library(DLLname,folderpath)
 

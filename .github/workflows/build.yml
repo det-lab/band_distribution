@@ -235,7 +235,13 @@ jobs:
       if: ${{ !contains(matrix.container, 'phhargrove') }}
       run: |
         set -x
-        pip install numpy scipy pandas matplotlib equibin
+        # `python -m pip`, not a bare `pip`: inside a job container, the
+        # `pip` wrapper script setup-python installs still carries the
+        # *host* runner's tool-cache path in its shebang, which doesn't
+        # resolve inside the container (it's bind-mounted at a different
+        # path there) -- `python -m pip` sidesteps that by not relying on
+        # the wrapper script at all.
+        python -m pip install numpy scipy pandas matplotlib equibin
 
     - name: Install compiled library to lib/
       if: ${{ !contains(matrix.container, 'phhargrove') }}

@@ -32,6 +32,7 @@ carries a similar share of expensive (high-energy) points.
 
 import ctypes
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -39,7 +40,9 @@ import numpy as np
 # python/internal/ is two levels below the repo root now (it used to be one).
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _REPO_LIB_DIR = os.path.join(_REPO_ROOT, "lib")
-_LIB_NAME = "libband_distribution.so"
+# fpm/the OS linker name this .dylib on macOS and .so everywhere else fpm
+# supports (Linux); there's no third platform to worry about.
+_LIB_NAME = "libband_distribution.dylib" if sys.platform == "darwin" else "libband_distribution.so"
 
 _DOUBLE_ARR = np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS")
 

@@ -14,10 +14,12 @@ sys.path.append(module_dir)
 import ppq_dist as ppq
 
 folderpath = repo_root
-if os.name == 'posix': #Linux/Mac
+if sys.platform == 'darwin':
+    DLLname = 'lib/libband_distribution.dylib'
+elif os.name == 'posix':  # Linux
     DLLname = 'lib/libband_distribution.so'
 else:
-    print ('OS other than Linux/Mac are not supported')
+    print('OS other than Linux/Mac are not supported')
 
 api = np.ctypeslib.load_library(DLLname,folderpath)
 
