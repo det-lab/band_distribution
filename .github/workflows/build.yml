@@ -240,7 +240,7 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Install Python dependencies (pq_dist / event_generator validation)
+    - name: Install band_distribution (pip, editable)
       if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
       run: |
         set -x
@@ -253,7 +253,23 @@ jobs:
         # -m pip also sidesteps the installed `pip` wrapper script, whose
         # shebang carries the *host* runner's tool-cache path -- one more
         # path that doesn't resolve inside the container.
-        "$pythonLocation/bin/python" -m pip install numpy scipy pandas matplotlib equibin
+        #
+        # An editable install of the whole package (pyproject.toml's [test]
+        # extra covers everything below, not a bare numpy/scipy/... list)
+        # so CI also validates that `pip install` itself works, not just
+        # the modules it happens to install.
+        "$pythonLocation/bin/python" -m pip install -e ".[test]"
+
+    - name: Validate pip packaging (graceful degradation without Fortran)
+      if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
+      run: |
+        set -x
+        # Deliberately before "Install compiled library to lib/": the
+        # point is to prove the package imports and its pure-Python half
+        # (event_generator.py) works with no Fortran library anywhere on
+        # the system, while PpqPDF fails clearly at construction instead
+        # of silently succeeding.
+        "$pythonLocation/bin/python" test/python/test_pip_packaging.py
 
     - name: Install compiled library to lib/
       if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
