@@ -23,6 +23,11 @@ __all__ = ["PpqPDF", "generate_events", "generate_NR_events", "generate_ER_event
 
 try:
     from importlib.metadata import PackageNotFoundError, version
-    __version__ = version(__name__)
+    # The installed distribution name ("phonon-charge-pdf" on PyPI)
+    # deliberately differs from this package's import name
+    # (band_distribution) -- see pyproject.toml and the README's
+    # "Installing the Python package" section -- so it has to be
+    # hardcoded here rather than derived from __name__.
+    __version__ = version("phonon-charge-pdf")
 except PackageNotFoundError:
     __version__ = "0+unknown"
