@@ -7,7 +7,8 @@ name = "band_distribution"
 dynamic = ["version"]
 description = "Neganov-Luke phonon / ionization-charge band PDF and event simulator for cryogenic detector NR/ER recoils, with an optional Fortran-accelerated backend."
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 dependencies = [
     "numpy",
