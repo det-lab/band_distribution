@@ -108,8 +108,11 @@ jobs:
       with:
         # setuptools-scm (pyproject.toml) derives the package version from
         # the nearest git tag; actions/checkout's default shallow clone
-        # (depth 1) has no tag history to find it in.
+        # (depth 1) has no tag history to find it in, and fetch-tags is a
+        # separate setting from fetch-depth -- false by default even with
+        # fetch-depth: 0, so it must be set explicitly too.
         fetch-depth: 0
+        fetch-tags: true
 
     - name: Install Dependencies Ubuntu
       if: ${{ contains(matrix.os, 'ubuntu') && matrix.compiler == 'gfortran' && matrix.version == '15' }}
