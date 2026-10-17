@@ -220,3 +220,46 @@ jobs:
         echo "FPM_FLAGS=${FPM_FLAGS}"
         echo "FFLAGS=$FFLAGS"
         fpm test                              ${FPM_FLAGS} --flag "$FFLAGS"
+
+    # Python validation of python/ppq_dist.py and python/event_generator.py
+    # against the compiled Fortran library. Skipped only for the
+    # phhargrove/llvm-flang containers, which are minimal (non-apt-based)
+    # images that can't reliably get a Python + pip toolchain installed.
+    - name: Install Python
+      if: ${{ !contains(matrix.container, 'phhargrove') }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Python dependencies (pq_dist / event_generator validation)
+      if: ${{ !contains(matrix.container, 'phhargrove') }}
+      run: |
+        set -x
+        pip install numpy scipy pandas matplotlib equibin
+
+    - name: Install compiled library to lib/
+      if: ${{ !contains(matrix.container, 'phhargrove') }}
+      run: |
+        set -x
+        fpm install --prefix=. ${FPM_FLAGS} --flag "$FFLAGS"
+
+    - name: Validate ppq_dist.py against the compiled library
+      if: ${{ !contains(matrix.container, 'phhargrove') }}
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/lib
+        DYLD_LIBRARY_PATH: ${{ github.workspace }}/lib
+      run: |
+        set -x
+        python test/python/test_PpqFort.py
+        python test/python/test_PpqFort_vectorFuncs.py
+        python test/python/test_safe_integrator_multimodal.py
+
+    - name: Validate the event generator against the compiled PDFs (smoke test)
+      if: ${{ !contains(matrix.container, 'phhargrove') }}
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/lib
+        DYLD_LIBRARY_PATH: ${{ github.workspace }}/lib
+      run: |
+        set -x
+        python test/python/test_chisquare_nr_simulator.py 100 64
+        python test/python/test_chisquare_er_simulator.py 100 64
