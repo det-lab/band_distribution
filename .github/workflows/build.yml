@@ -254,26 +254,28 @@ jobs:
 
     - name: Validate ppq_dist.py against the compiled library
       if: ${{ !contains(matrix.container, 'phhargrove') }}
-      env:
-        # Relative, not ${{ github.workspace }}: that context expression is
-        # always the host runner's path, even for a step running inside a
-        # job container, where the checkout is bind-mounted at a different
-        # path -- a relative path resolves against the shell's cwd, which
-        # is the checkout root either way.
-        LD_LIBRARY_PATH: lib
-        DYLD_LIBRARY_PATH: lib
       run: |
         set -x
+        # Prepend a relative `lib`, don't replace LD_LIBRARY_PATH/
+        # DYLD_LIBRARY_PATH outright: setup-python's portable Python build
+        # needs its own entry already in there (to find libpython itself)
+        # on the container jobs. And it must be relative, not
+        # ${{ github.workspace }}: that context expression is always the
+        # host runner's path, even inside a job container where the
+        # checkout is bind-mounted at a different path -- a relative path
+        # resolves against the shell's cwd, which is the checkout root
+        # either way.
+        export LD_LIBRARY_PATH="lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
         "$pythonLocation/bin/python" test/python/test_PpqFort.py
         "$pythonLocation/bin/python" test/python/test_PpqFort_vectorFuncs.py
         "$pythonLocation/bin/python" test/python/test_safe_integrator_multimodal.py
 
     - name: Validate the event generator against the compiled PDFs (smoke test)
       if: ${{ !contains(matrix.container, 'phhargrove') }}
-      env:
-        LD_LIBRARY_PATH: lib
-        DYLD_LIBRARY_PATH: lib
       run: |
         set -x
+        export LD_LIBRARY_PATH="lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
         "$pythonLocation/bin/python" test/python/test_chisquare_nr_simulator.py 100 64
         "$pythonLocation/bin/python" test/python/test_chisquare_er_simulator.py 100 64
