@@ -235,13 +235,16 @@ jobs:
       if: ${{ !contains(matrix.container, 'phhargrove') }}
       run: |
         set -x
-        # `python -m pip`, not a bare `pip`: inside a job container, the
-        # `pip` wrapper script setup-python installs still carries the
-        # *host* runner's tool-cache path in its shebang, which doesn't
-        # resolve inside the container (it's bind-mounted at a different
-        # path there) -- `python -m pip` sidesteps that by not relying on
-        # the wrapper script at all.
-        python -m pip install numpy scipy pandas matplotlib equibin
+        # Invoke the interpreter setup-python just installed by its own
+        # absolute path ($pythonLocation), not a bare `python`/`pip`: inside
+        # a job container, PATH updates from setup-python's $GITHUB_PATH
+        # don't reliably take effect by the next step's `docker exec`, so a
+        # bare `python` can silently resolve to the container's own
+        # system interpreter instead (no numpy installed there). Using
+        # -m pip also sidesteps the installed `pip` wrapper script, whose
+        # shebang carries the *host* runner's tool-cache path -- one more
+        # path that doesn't resolve inside the container.
+        "$pythonLocation/bin/python" -m pip install numpy scipy pandas matplotlib equibin
 
     - name: Install compiled library to lib/
       if: ${{ !contains(matrix.container, 'phhargrove') }}
@@ -252,20 +255,25 @@ jobs:
     - name: Validate ppq_dist.py against the compiled library
       if: ${{ !contains(matrix.container, 'phhargrove') }}
       env:
-        LD_LIBRARY_PATH: ${{ github.workspace }}/lib
-        DYLD_LIBRARY_PATH: ${{ github.workspace }}/lib
+        # Relative, not ${{ github.workspace }}: that context expression is
+        # always the host runner's path, even for a step running inside a
+        # job container, where the checkout is bind-mounted at a different
+        # path -- a relative path resolves against the shell's cwd, which
+        # is the checkout root either way.
+        LD_LIBRARY_PATH: lib
+        DYLD_LIBRARY_PATH: lib
       run: |
         set -x
-        python test/python/test_PpqFort.py
-        python test/python/test_PpqFort_vectorFuncs.py
-        python test/python/test_safe_integrator_multimodal.py
+        "$pythonLocation/bin/python" test/python/test_PpqFort.py
+        "$pythonLocation/bin/python" test/python/test_PpqFort_vectorFuncs.py
+        "$pythonLocation/bin/python" test/python/test_safe_integrator_multimodal.py
 
     - name: Validate the event generator against the compiled PDFs (smoke test)
       if: ${{ !contains(matrix.container, 'phhargrove') }}
       env:
-        LD_LIBRARY_PATH: ${{ github.workspace }}/lib
-        DYLD_LIBRARY_PATH: ${{ github.workspace }}/lib
+        LD_LIBRARY_PATH: lib
+        DYLD_LIBRARY_PATH: lib
       run: |
         set -x
-        python test/python/test_chisquare_nr_simulator.py 100 64
-        python test/python/test_chisquare_er_simulator.py 100 64
+        "$pythonLocation/bin/python" test/python/test_chisquare_nr_simulator.py 100 64
+        "$pythonLocation/bin/python" test/python/test_chisquare_er_simulator.py 100 64
