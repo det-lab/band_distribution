@@ -103,17 +103,6 @@ jobs:
       FPM_FLAGS:  --profile release --verbose
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        # setuptools-scm (pyproject.toml) derives the package version from
-        # the nearest git tag; actions/checkout's default shallow clone
-        # (depth 1) has no tag history to find it in, and fetch-tags is a
-        # separate setting from fetch-depth -- false by default even with
-        # fetch-depth: 0, so it must be set explicitly too.
-        fetch-depth: 0
-        fetch-tags: true
-
     - name: Install Dependencies Ubuntu
       if: ${{ contains(matrix.os, 'ubuntu') && matrix.compiler == 'gfortran' && matrix.version == '15' }}
       run: |
@@ -149,6 +138,20 @@ jobs:
         echo "CFLAGS=-I$(dirname $(find $(brew --prefix)/Cellar/flang -name ISO_Fortran_binding.h | head -1)) ${CFLAGS}" >> "$GITHUB_ENV"
         # Prepend homebrew clang to PATH:
         echo "PATH=$(brew --prefix)/opt/llvm/bin:${PATH}" >> "$GITHUB_ENV"
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        # setuptools-scm (pyproject.toml) derives the package version from
+        # the nearest git tag. This step runs after the dependency-install
+        # steps above, not first: on the apt-based containers, git isn't
+        # installed yet at the very start of the job, and actions/checkout
+        # silently falls back to a tarball download via the GitHub REST
+        # API with no .git directory at all when it can't find git on
+        # PATH -- no history, no tags, regardless of fetch-depth/
+        # fetch-tags below. None of the steps above need the checkout.
+        fetch-depth: 0
+        fetch-tags: true
 
     - name: Setup Compilers
       run: |
