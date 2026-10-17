@@ -32,39 +32,69 @@ carries a similar share of expensive (high-energy) points.
 
 import ctypes
 import os
+import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
 # python/internal/ is two levels below the repo root now (it used to be one).
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_LIB_DIR = os.path.join(_REPO_ROOT, "lib")
+_REPO_LIB_DIR = os.path.join(_REPO_ROOT, "lib")
+# fpm/the OS linker name this .dylib on macOS and .so everywhere else fpm
+# supports (Linux); there's no third platform to worry about.
+_LIB_NAME = "libband_distribution.dylib" if sys.platform == "darwin" else "libband_distribution.so"
 
 _DOUBLE_ARR = np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS")
 
 _api = None
 
 
+def _candidate_libs():
+    """Where to look for libband_distribution.so, in order.
+
+    1. _REPO_LIB_DIR -- today's convention: running out of a git checkout
+       with `fpm build`'s output at the repo root's lib/. This still makes
+       sense once this file is relocated (e.g. pip-installed into
+       site-packages): the path just won't exist there, and the next
+       candidate is tried.
+    2. A bare library name, so the OS's own loader searches
+       LD_LIBRARY_PATH (Linux) / DYLD_LIBRARY_PATH (macOS) / rpath -- what
+       a container or a pip install outside any git checkout is expected
+       to rely on, same as every other shared library on the system.
+    """
+    return [os.path.join(_REPO_LIB_DIR, _LIB_NAME), _LIB_NAME]
+
+
 def _load_library():
-    """Load libband_distribution.so.
+    """Load libband_distribution.so, trying each of _candidate_libs() in turn.
 
     The library has no SONAME and its RUNPATH points at nix store paths,
     so its dependencies (libassert.so, libjulienne.so) can only be found
     via LD_LIBRARY_PATH, which must be set before the Python process
     starts:  LD_LIBRARY_PATH=lib python your_script.py
+    (LD_LIBRARY_PATH -- or DYLD_LIBRARY_PATH on macOS -- is also how the
+    bare-name candidate below finds the library itself, not just its
+    dependencies, when there's no repo checkout to find lib/ in.)
     """
     global _api
     if _api is not None:
         return _api
 
-    try:
-        _api = ctypes.CDLL(os.path.join(_LIB_DIR, "libband_distribution.so"))
-    except OSError as e:
+    errors = []
+    for candidate in _candidate_libs():
+        try:
+            _api = ctypes.CDLL(candidate)
+            break
+        except OSError as e:
+            errors.append(f"  {candidate}: {e}")
+    else:
+        tried = "\n".join(errors)
         raise RuntimeError(
-            f"Could not load libband_distribution.so ({e}). "
-            f"Run with LD_LIBRARY_PATH={_LIB_DIR} set before Python starts, "
+            f"Could not load {_LIB_NAME}. Tried:\n{tried}\n"
+            f"Set LD_LIBRARY_PATH (or DYLD_LIBRARY_PATH on macOS) to the directory "
+            f"containing it before Python starts, "
             f"e.g.: LD_LIBRARY_PATH=lib python your_script.py"
-        ) from e
+        )
 
     _api.PpqN_vector.argtypes = [
         _DOUBLE_ARR, _DOUBLE_ARR, ctypes.c_int,

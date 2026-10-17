@@ -5,21 +5,34 @@ import os
 
 repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Path to the directory containing pq_dist_v10.py
+# Path to the directory containing ppq_dist.py
 module_dir = os.path.join(repo_root, 'python', 'internal')
 sys.path.append(module_dir)
 
-# pq_dist_v10 contains the Python implementation with the numerical N integral
+# ppq_dist contains the Python implementation with the numerical N integral
 # (21-point Simpson's rule, sigp/sigq at noiseless energies), matching Fortran PpqN.
-import pq_dist_v10 as ppq
+import ppq_dist as ppq
 
 folderpath = repo_root
-if os.name == 'posix': #Linux/Mac
+if sys.platform == 'darwin':
+    DLLname = 'lib/libband_distribution.dylib'
+elif os.name == 'posix':  # Linux
     DLLname = 'lib/libband_distribution.so'
 else:
-    print ('OS other than Linux/Mac are not supported')
+    print('OS other than Linux/Mac are not supported')
 
 api = np.ctypeslib.load_library(DLLname,folderpath)
+
+failures = []
+
+
+def check(name, fort_val, py_val, *, rtol=1e-9, atol=0.0):
+    """Record and print a PASS/FAIL comparison of the Fortran and Python results."""
+    ok = bool(np.isclose(fort_val, py_val, rtol=rtol, atol=atol))
+    print(f"{'PASS' if ok else 'FAIL'}  {name}: fortran={fort_val!r}  python={py_val!r}")
+    if not ok:
+        failures.append(name)
+
 
 # Define all our parameters and variables
 k = 0.18
@@ -45,6 +58,7 @@ result_py = ppq.Y(Er, k=k, Z=Z)
 print('back in python after running function Y')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("Y", result_fort, result_py)
 
 # Define argument and return types for the function Nbar
 api.Nbar.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
@@ -55,17 +69,19 @@ result_py = ppq.Nbar(Er, k=k, Z=Z, eps=eps, is_gamma=False)
 print('back in python after running function Nbar')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("Nbar", result_fort, result_py)
 
 # Define argument and return types for the function sigp
 api.sigp.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double]
 api.sigp.restype = ctypes.c_double
 
-result_fort = api.sigp(ctypes.c_double(Ep), ctypes.c_double(eps), ctypes.c_double(V), 
+result_fort = api.sigp(ctypes.c_double(Ep), ctypes.c_double(eps), ctypes.c_double(V),
                        ctypes.c_double(p0), ctypes.c_double(p10))
 result_py = ppq.sigp(Ep, eps=eps, V=V, p0=p0, p10=p10)
 print('back in python after running function sigp')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("sigp", result_fort, result_py)
 
 # Define argument and return types for the function sigq
 api.sigq.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_double]
@@ -76,6 +92,7 @@ result_py = ppq.sigq(Eq, q0=q0, q10=q10)
 print('back in python after running function sigq')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("sigq", result_fort, result_py)
 
 # Define argument and return types for the function PErN
 api.PErN.argtypes = [ctypes.c_double]
@@ -86,6 +103,7 @@ result_py = ppq.PErN(Er)
 print('back in python after running function PErN')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("PErN", result_fort, result_py)
 
 # Define argument and return types for the function PErG
 api.PErG.argtypes = [ctypes.c_double]
@@ -96,6 +114,7 @@ result_py = ppq.PErG(Er)
 print('back in python after running function PErG')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("PErG", result_fort, result_py)
 
 # Define argument and return types for the function PpqFullN
 api.PpqFullN.argtypes = [ctypes.c_double] * 12
@@ -110,6 +129,7 @@ result_py = ppq.PpqFullN(Er, Ep, Eq, k=k, Z=Z, F0=F0, eps=eps, V=V, p0=p0, p10=p
 print('back in python after running function PpqFullN')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("PpqFullN", result_fort, result_py, rtol=1e-6, atol=1e-12)
 
 # Define argument and return types for the function PpqN
 api.PpqN.argtypes = [ctypes.c_double] * 11
@@ -124,6 +144,11 @@ result_fort = api.PpqN(ctypes.c_double(Ep), ctypes.c_double(Eq),
 print('back in python after running function PpqN')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+# Looser tolerance: the Fortran side and PpqN_safe_inspect's scipy.integrate.quad
+# both integrate PpqFullN over Er, but with different quadrature schemes --
+# "machine precision" only applies to PpqFullN itself (checked above), not
+# to two independently-converged numerical integrals of it.
+check("PpqN", result_fort, result_py, rtol=1e-4, atol=1e-12)
 
 # Define argument and return types for the function PpqG
 api.PpqG.argtypes = [ctypes.c_double] * 9
@@ -137,6 +162,7 @@ result_fort = api.PpqG(ctypes.c_double(Ep), ctypes.c_double(Eq),
 print('back in python after running function PpqG')
 print('The fortran result is ', result_fort)
 print('The python result is ', result_py)
+check("PpqG", result_fort, result_py, rtol=1e-4, atol=1e-12)
 
 # Set argtypes and restype for the function PpqN_vector
 api.PpqN_vector.argtypes = [
@@ -191,7 +217,6 @@ api.PpqFort_version.restype = None
 vmaj, vmin, vpatch = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
 api.PpqFort_version(ctypes.byref(vmaj), ctypes.byref(vmin), ctypes.byref(vpatch))
 print("Fortran version: ", (vmaj.value, vmin.value, vpatch.value))
-print("Python version: ", ppq.__version__)
 
 print("Parameters Are ####################")
 print("Er: ", Er)
@@ -206,3 +231,9 @@ print("p0: ", p0)
 print("p10: ", p10)
 print("q0: ", q0)
 print("q10: ", q10)
+
+print()
+if failures:
+    print(f"{len(failures)} FAILED: {failures}")
+    sys.exit(1)
+print("ALL PASS")

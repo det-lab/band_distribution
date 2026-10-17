@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phonon-charge-pdf"
+dynamic = ["version"]
+description = "Neganov-Luke phonon / ionization-charge band PDF and event simulator for cryogenic detector NR/ER recoils, with an optional Fortran-accelerated backend."
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+]
+
+[project.optional-dependencies]
+test = ["matplotlib", "equibin"]
+
+[project.urls]
+Repository = "https://github.com/det-lab/band_distribution"
+
+[tool.setuptools]
+package-dir = {"band_distribution" = "python"}
+packages = ["band_distribution", "band_distribution.internal", "band_distribution.cli"]
+
+[tool.setuptools.package-data]
+"band_distribution.cli" = ["table_registry.json"]
+
+[tool.setuptools_scm]

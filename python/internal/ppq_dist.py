@@ -2,7 +2,10 @@ import numpy as np
 import scipy.integrate as integrate
 from scipy.optimize import curve_fit
 
-__version__ = "2.0.0"
+# No module-level __version__ here anymore: the package version lives in
+# fpm.toml (git tags, CITATION.cff) -- see the versioning bootstrap in the
+# repo's git-flow setup. A second, hand-maintained copy here is exactly the
+# per-file version drift this rename is meant to retire.
 
 #the ionization yield: the Lindhard model.
 #Y(Er) = k*g(eps_L) / (1 + k*g(eps_L)), with
