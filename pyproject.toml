@@ -20,7 +20,7 @@ dependencies = [
 test = ["matplotlib", "equibin"]
 
 [project.urls]
-Repository = "https://github.com/det-lab/band_distribution"
+Repository = "https://github.com/det-lab/phonon-charge-pdf"
 
 [tool.setuptools]
 package-dir = {"band_distribution" = "python"}

@@ -21,7 +21,7 @@ or, directly to a `.sif` for HPC — this is what `slurm/pull_container.job` doe
 apptainer build band.sif docker://ghcr.io/det-lab/band_distribution_llvm:v1.1.4
 ```
 
-Replace `v1.1.4` with any other release tag (see [releases](https://github.com/det-lab/band_distribution/releases) or `git tag -l`), or `latest` for the newest.
+Replace `v1.1.4` with any other release tag (see [releases](https://github.com/det-lab/phonon-charge-pdf/releases) or `git tag -l`), or `latest` for the newest.
 
 ## The Jupyter container (notebooks)
 
