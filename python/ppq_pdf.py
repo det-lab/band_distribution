@@ -8,6 +8,11 @@ MCMC -- if you want normalized PDF values or a likelihood, start here:
     normalized = fit.ppqn_normalized_values(k=k, Z=Z, F0=F0, eps=eps, V=V,
                                              p0=p0, p10=p10, q0=q0, q10=q10)
 
+PpqPDF always needs the compiled Fortran library (a table only replaces the
+normalization integral, never the per-event PDF evaluation), so
+construction eagerly loads it and raises immediately if it can't be found,
+rather than succeeding and failing on the first likelihood call instead.
+
 See the README's "Normalizing a likelihood fit to a region" section for the
 full walkthrough, including precomputed tables for MCMC.  If you instead
 want to generate simulated (Ep, Eq) events -- e.g. to validate a fit
@@ -69,7 +74,8 @@ _INTERNAL_DIR = os.path.join(_PYTHON_DIR, "internal")
 _CLI_DIR = os.path.join(_PYTHON_DIR, "cli")
 
 sys.path.insert(0, _INTERNAL_DIR)
-from _ppqfort_bindings import make_ppqg_pdf_unnormalized, make_ppqn_pdf_unnormalized, ppqg_region, ppqn_region
+from _ppqfort_bindings import (make_ppqg_pdf_unnormalized, make_ppqn_pdf_unnormalized,
+                                ppqg_region, ppqn_region, version as _fort_version)
 
 
 class PpqPDF:
@@ -107,6 +113,14 @@ class PpqPDF:
                  norm_epsrel=None, norm_epsabs=None,
                  ppqn_table=None, ppqg_table=None, prior_bounds=None,
                  n_workers=None):
+        # A table only ever replaces the normalization integral, never the
+        # per-event PDF evaluation (ppqn_values/ppqg_values always need
+        # PpqN_vector/PpqG_vector) -- so every PpqPDF needs the compiled
+        # library eventually. Load it now and raise here, with the clear
+        # LD_LIBRARY_PATH message from _load_library(), rather than
+        # succeeding silently and failing on the first likelihood call
+        # deep into a fit or MCMC run.
+        _fort_version()
         self.ep_min, self.ep_max = ep_min, ep_max
         self.eq_min, self.eq_max = eq_min, eq_max
         self.ep_data = np.ascontiguousarray(np.asarray(ep_data, dtype=np.float64))

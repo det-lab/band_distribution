@@ -39,6 +39,12 @@ In notebooks, select the **Python (band)** kernel — it runs in the `band` cond
 
 Need a different compiler, local development, or to reproduce an exact uncommitted state instead of a release?  See [Building from source](#building-from-source).
 
+# Installing the Python package
+
+`pip install -e .` from a checkout (add `[test]` for the dependencies the test suite and chi-square validation need: `pip install -e ".[test]"`) installs `band_distribution` -- `import band_distribution` then gives you `PpqPDF` and `generate_events`/`generate_NR_events`/`generate_ER_events` directly, instead of the `sys.path.insert(0, "python")` shown in the examples below (which still works -- both are the same code, this just makes it a real package). The package's version comes from the nearest git tag (`setuptools-scm`), not a hand-maintained string.
+
+This always succeeds, with or without a compiled library: `event_generator.py`'s functions are pure Python and need nothing else. `PpqPDF` always needs the compiled library -- even with a precomputed normalization table (see below) -- so it loads it eagerly and raises immediately at construction if it can't be found, rather than succeeding and failing on the first likelihood call instead; see [Shared library for the python interface](#shared-library-for-the-python-interface) for building it, and point `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` at it if it's not in this checkout's `lib/`.
+
 # Using the library: `PpqPDF`
 
 **If you want to use this library — a fit, an MCMC, anything that needs normalized PDF values or a likelihood — `PpqPDF` (`python/ppq_pdf.py`) is the one entrypoint.** Inside a published container (above) the shared library is already built.  If you're building from source instead, see [Building from source](#building-from-source) first.  Then:
@@ -252,6 +258,8 @@ LD_LIBRARY_PATH=lib python test/python/test_PpqFort_vectorFuncs.py
 ```
 
 (`LD_LIBRARY_PATH=lib` is needed when running outside the docker containers, which set it in their environment.)
+
+`test/python/test_pip_packaging.py` is the one test here that's meant to run *without* the compiled library: against a `pip install -e ".[test]"` of this repository (see [Installing the Python package](#installing-the-python-package)) and before the library is built, it checks that `import band_distribution` and `event_generator.py`'s functions still work, and that `PpqPDF` fails clearly at construction instead of silently succeeding.
 
 See `test/python/README.md` for a map of the test scripts and their supporting modules, including where the PDF-over-bin integration lives.
 
