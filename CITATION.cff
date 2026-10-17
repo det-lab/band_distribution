@@ -18,6 +18,7 @@ authors:
     affiliation: Lawrence Berkeley National Laboratory
     orcid: "https://orcid.org/0000-0002-2344-868X"
 repository-code: "https://github.com/det-lab/phonon-charge-pdf"
+doi: 10.5281/zenodo.23049123   # concept DOI: always resolves to the latest archived release, independent of the repo's name/URL
 license: BSD-3-Clause
 keywords:
   - dark matter
