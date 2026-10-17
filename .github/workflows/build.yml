@@ -220,3 +220,71 @@ jobs:
         echo "FPM_FLAGS=${FPM_FLAGS}"
         echo "FFLAGS=$FFLAGS"
         fpm test                              ${FPM_FLAGS} --flag "$FFLAGS"
+
+    # Python validation of python/ppq_dist.py and python/event_generator.py
+    # against the compiled Fortran library. Skipped for:
+    # - the phhargrove/llvm-flang containers, which are minimal
+    #   (non-apt-based) images that can't reliably get a Python + pip
+    #   toolchain installed.
+    # - ifx: libband_distribution.so (via its -coarray dependency on
+    #   libjulienne.so) needs an Intel coarray-runtime symbol
+    #   (for_rtl_ICAF_NUM_IMAGES_TEAM) that's apparently only resolved when
+    #   linked into a full ifx-built executable (as fpm test's own driver
+    #   is) -- loading the shared library standalone via ctypes.CDLL hits
+    #   `OSError: undefined symbol`. Getting ctypes to load an
+    #   Intel-coarray-enabled .so outside Intel's own build/launch machinery
+    #   is a separate problem from wiring Python into CI; left for later.
+    - name: Install Python
+      if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Python dependencies (pq_dist / event_generator validation)
+      if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
+      run: |
+        set -x
+        # Invoke the interpreter setup-python just installed by its own
+        # absolute path ($pythonLocation), not a bare `python`/`pip`: inside
+        # a job container, PATH updates from setup-python's $GITHUB_PATH
+        # don't reliably take effect by the next step's `docker exec`, so a
+        # bare `python` can silently resolve to the container's own
+        # system interpreter instead (no numpy installed there). Using
+        # -m pip also sidesteps the installed `pip` wrapper script, whose
+        # shebang carries the *host* runner's tool-cache path -- one more
+        # path that doesn't resolve inside the container.
+        "$pythonLocation/bin/python" -m pip install numpy scipy pandas matplotlib equibin
+
+    - name: Install compiled library to lib/
+      if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
+      run: |
+        set -x
+        fpm install --prefix=. ${FPM_FLAGS} --flag "$FFLAGS"
+
+    - name: Validate ppq_dist.py against the compiled library
+      if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
+      run: |
+        set -x
+        # Prepend a relative `lib`, don't replace LD_LIBRARY_PATH/
+        # DYLD_LIBRARY_PATH outright: setup-python's portable Python build
+        # needs its own entry already in there (to find libpython itself)
+        # on the container jobs. And it must be relative, not
+        # ${{ github.workspace }}: that context expression is always the
+        # host runner's path, even inside a job container where the
+        # checkout is bind-mounted at a different path -- a relative path
+        # resolves against the shell's cwd, which is the checkout root
+        # either way.
+        export LD_LIBRARY_PATH="lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+        "$pythonLocation/bin/python" test/python/test_PpqFort.py
+        "$pythonLocation/bin/python" test/python/test_PpqFort_vectorFuncs.py
+        "$pythonLocation/bin/python" test/python/test_safe_integrator_multimodal.py
+
+    - name: Validate the event generator against the compiled PDFs (smoke test)
+      if: ${{ !contains(matrix.container, 'phhargrove') && matrix.compiler != 'ifx' }}
+      run: |
+        set -x
+        export LD_LIBRARY_PATH="lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export DYLD_LIBRARY_PATH="lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+        "$pythonLocation/bin/python" test/python/test_chisquare_nr_simulator.py 100 64
+        "$pythonLocation/bin/python" test/python/test_chisquare_er_simulator.py 100 64
